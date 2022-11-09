@@ -20,7 +20,7 @@ DEF_test(fastring) {
         EXPECT_EQ(x, "");
         EXPECT_EQ(x.capacity(), 0);
         EXPECT_EQ(x.size(), 0);
-        EXPECT_EQ(x.data(), (const char*)0);
+        EXPECT_EQ(((size_t)x.data()), ((size_t)0));
     }
 
     DEF_case(append) {
@@ -65,6 +65,106 @@ DEF_test(fastring) {
         std::string x("xx");
         s.append(x);
         EXPECT_EQ(s, "xxx");
+
+        uint8 u = 'x';
+        s.append(u);
+        EXPECT_EQ(s, "xxxx");
+
+        char c = 'x';
+        s.append(c);
+        EXPECT_EQ(s, "xxxxx");
+
+        EXPECT_EQ(fastring("x") + 'x', "xx");
+        EXPECT_EQ('x' + fastring("x"), "xx");
+        EXPECT_EQ(fastring("x") + std::string("x"), "xx");
+        EXPECT_EQ(std::string("x") + fastring("x"), "xx");
+    }
+
+    DEF_case(cat) {
+        fastring s;
+        EXPECT_EQ(s.cat(), "");
+        EXPECT_EQ(s.cat(1, 2, 3), "123");
+        EXPECT_EQ(s.cat(' ', "hello ", false), "123 hello false");
+    }
+
+    DEF_case(operator<<) {
+        fastring s;
+        {
+            s << false << ' ' << true;
+            EXPECT_EQ(s, "false true");
+            EXPECT_EQ((fastring() << false << ' ' << true), "false true");
+            s.clear();
+        }
+
+        {
+            char c = 'c';
+            signed char sc = 'c';
+            unsigned char uc = 'c';
+            const char& x = c;
+            s << c << sc << uc << x;
+            EXPECT_EQ(s, "cccc");
+            s.clear();
+        }
+
+        {
+            short s1 = -1;
+            unsigned short s2 = 1;
+            int i1 = -2;
+            unsigned int i2 = 2;
+            long l1 = -4;
+            unsigned long l2 = 4;
+            long long ll1 = -8;
+            unsigned long long ll2 = 8;
+            s << s1 << s2 << ' ' << i1 << i2 << ' ' << l1 << l2 << ' ' << ll1 << ll2;
+            EXPECT_EQ(s, "-11 -22 -44 -88");
+            s.clear();
+        }
+
+        {
+            float f = 0.5f;
+            double d = 3.14159;
+
+            s << f;
+            EXPECT_NE(s, "");
+            EXPECT_EQ(s, "0.5");
+            s.clear();
+
+            s << d;
+            EXPECT_NE(s, "");
+            EXPECT_EQ(s, "3.14159");
+            s.clear();
+        }
+
+        {
+            const char* cs = "cs";
+            std::string ss = "ss";
+            fastring x = "x";
+            char yz[4];
+            yz[0] = 'y';
+            yz[1] = 'z';
+            yz[2] = '\0';
+            yz[3] = 'x';
+
+            s << cs << ss << x << yz << "^o^";
+            EXPECT_EQ(s, "csssxyz^o^");
+            EXPECT_EQ((fastring() << cs << ss << x << yz << "^o^"), "csssxyz^o^");
+
+            s.clear();
+            s << s;
+            EXPECT_EQ(s, "");
+            s << "x";
+            s << s;
+            EXPECT_EQ(s, "xx");
+            s.clear();
+        }
+
+        {
+            int x = 0;
+            s << &x;
+            EXPECT_NE(s, "");
+            EXPECT_EQ(s.substr(0, 2), "0x");
+            s.clear();
+        }
     }
 
     DEF_case(substr) {
@@ -83,33 +183,39 @@ DEF_test(fastring) {
         EXPECT_EQ("88888888", s);
         EXPECT_EQ(s, "88888888");
         EXPECT_EQ(s, fastring("88888888"));
+        EXPECT_EQ(s, std::string("88888888"));
 
         EXPECT_NE("8888888", s);
         EXPECT_NE(s, "8888888");
         EXPECT_NE(s, fastring("8888888"));
+        EXPECT_NE(s, std::string("8888888"));
         EXPECT_NE(s, "888888888");
         EXPECT_NE(s, "xxxxxx");
 
         EXPECT_LT("7777777", s);
         EXPECT_GT(s, "7777777");
         EXPECT_GT(s, fastring("7777777"));
+        EXPECT_GT(s, std::string("7777777"));
         EXPECT_GT(s, "77777777");
         EXPECT_GT(s, "777777777");
 
         EXPECT_GT("9999999", s);
         EXPECT_LT(s, "9999999");
         EXPECT_LT(s, fastring("9999999"));
+        EXPECT_LT(s, std::string("9999999"));
         EXPECT_LT(s, "99999999");
         EXPECT_LT(s, "999999999");
 
         EXPECT_LE("88888888", s);
         EXPECT_GE(s, "88888888");
         EXPECT_GE(s, fastring("88888888"));
+        EXPECT_GE(s, std::string("88888888"));
         EXPECT_GE(s, "777777777")
 
         EXPECT_GE("88888888", s);
         EXPECT_LE(s, "88888888");
         EXPECT_LE(s, fastring("88888888"));
+        EXPECT_LE(s, std::string("88888888"));
         EXPECT_LE(s, "9999999");
     }
 
@@ -117,6 +223,11 @@ DEF_test(fastring) {
         fastring s("xxxyyyzzz");
         EXPECT_EQ(s.find('a'), s.npos);
         EXPECT_EQ(s.find('y'), 3);
+        EXPECT_EQ(s.find('y', 0, 3), s.npos); // find in range [0, 3)
+        EXPECT_EQ(s.find('y', 0, 4), 3);      // find in range [0, 4)
+        EXPECT_EQ(s.find('y', 3, 3), 3);      // find in range [3, 6)
+        EXPECT_EQ(s.find('y', 4, 3), 4);      // find in range [4, 7)
+        EXPECT_EQ(s.find('y', 6, 3), s.npos); // find in range [6, 9)
         EXPECT_EQ(s.find('y', 4), 4);
         EXPECT_EQ(s.find('y', 32), s.npos);
         EXPECT_EQ(s.rfind('y'), 5);
@@ -168,59 +279,44 @@ DEF_test(fastring) {
 
     DEF_case(replace) {
         fastring s("1122332211");
-        s.replace("22", "xx");
-        EXPECT_EQ(s, "11xx33xx11");
-
-        s.replace("xx", "22", 1);
-        EXPECT_EQ(s, "112233xx11");
+        EXPECT_EQ(s.replace("22", "xx"), "11xx33xx11");
+        EXPECT_EQ(s.replace("xx", "22", 1), "112233xx11");
 
         s = "xxxxx";
-        s.replace("xx", "yy");
-        EXPECT_EQ(s, "yyyyx");
+        EXPECT_EQ(s.replace("xx", "yy"), "yyyyx");
 
         s = "xxxxx";
-        s.replace("xxx", "x");
-        EXPECT_EQ(s, "xxx");
+        EXPECT_EQ(s.replace("xxx", "x"), "xxx");
 
         s = "xxxxxxxxx";
-        s.replace("xxx", "x");
-        EXPECT_EQ(s, "xxx");
-
-        s.replace("x", "xx");
-        EXPECT_EQ(s, "xxxxxx");
+        EXPECT_EQ(s.replace("xxx", "x"), "xxx");
+        EXPECT_EQ(s.replace("x", "xx"), "xxxxxx");
     }
 
     DEF_case(strip) {
         fastring s("xx1122332211");
         const char* p = s.data();
 
-        s.strip("x", 'l');
-        EXPECT_EQ(s, "1122332211");
+        EXPECT_EQ(s.strip("x", 'l'), "1122332211");
         EXPECT_EQ(s.data(), p);
 
-        s.strip("1", 'r');
-        EXPECT_EQ(s, "11223322");
+        EXPECT_EQ(s.strip("1", 'r'), "11223322");
         EXPECT_EQ(s.data(), p);
 
-        s.strip("12");
-        EXPECT_EQ(s, "33");
+        EXPECT_EQ(s.strip("12"), "33");
         EXPECT_EQ(s.data(), p);
 
-        s.strip("3");
-        EXPECT_EQ(s, "");
+        EXPECT_EQ(s.strip("3"), "");
         EXPECT_EQ(s.data(), p);
 
         s = "xxxyyy";
-        s.strip("xy");
-        EXPECT_EQ(s, "");
+        EXPECT_EQ(s.strip("xy"), "");
 
         s = "xxx";
-        s.strip("xy", 'r');
-        EXPECT_EQ(s, "");
+        EXPECT_EQ(s.strip("xy", 'r'), "");
 
         s = "xxx";
-        s.strip("xy", 'l');
-        EXPECT_EQ(s, "");
+        EXPECT_EQ(s.strip("xy", 'l'), "");
     }
 
     DEF_case(starts_ends) {
@@ -235,6 +331,20 @@ DEF_test(fastring) {
         EXPECT(s.ends_with("zzz"));
         EXPECT(s.ends_with("zzz", 3));
         EXPECT(s.ends_with("yyzzz", 5));
+    }
+
+    DEF_case(remove_tail) {
+        fastring s("xx.log");
+        EXPECT_EQ(s.remove_tail(".log"), "xx");
+        EXPECT_EQ(s.remove_tail(".log"), "xx");
+
+        s = "xx.exe";
+        fastring x(".exe");
+        EXPECT_EQ(s.remove_tail(x), "xx");
+
+        s = "xx.exe";
+        std::string e(".exe");
+        EXPECT_EQ(s.remove_tail(e), "xx");
     }
 
     DEF_case(upperlower) {
@@ -272,6 +382,19 @@ DEF_test(fastring) {
         EXPECT_EQ(fastring("hello").lshift(4), "o");
         EXPECT_EQ(fastring("hello").lshift(5), "");
         EXPECT_EQ(fastring("hello").lshift(6), "");
+    }
+
+    DEF_case(safe_clear) {
+        fastring s("xxx");
+        s.safe_clear();
+        EXPECT_EQ(s.size(), 0);
+        EXPECT_EQ(s[0], 0);
+        EXPECT_EQ(s[1], 0);
+        EXPECT_EQ(s[2], 0);
+
+        fastring x;
+        x.safe_clear();
+        EXPECT_EQ(s.size(), 0);
     }
 
     DEF_case(shrink) {

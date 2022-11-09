@@ -122,41 +122,30 @@ DEF_test(atomic) {
         EXPECT_EQ(atomic_compare_swap(&i8, 1, 0), 1);
         EXPECT_EQ(atomic_compare_swap(&i16, 1, 0), 1);
         EXPECT_EQ(atomic_compare_swap(&i32, 1, 0), 1);
+        EXPECT_EQ(atomic_cas(&i32, 0, 1), 0);
+        EXPECT(atomic_bool_cas(&i32, 1, 0));
         EXPECT_EQ(atomic_compare_swap(&i64, 1, 0), 1);
     }
 
-    DEF_case(get) {
-        EXPECT_EQ(atomic_get(&b), false);
-        EXPECT_EQ(atomic_get(&i8), 0);
-        EXPECT_EQ(atomic_get(&i16), 0);
-        EXPECT_EQ(atomic_get(&i32), 0);
-        EXPECT_EQ(atomic_get(&i64), 0);
+    DEF_case(load) {
+        EXPECT_EQ(atomic_load(&b), false);
+        EXPECT_EQ(atomic_load(&i8), 0);
+        EXPECT_EQ(atomic_load(&i16), 0);
+        EXPECT_EQ(atomic_load(&i32), 0);
+        EXPECT_EQ(atomic_load(&i64), 0);
     }
 
-    DEF_case(set) {
-        atomic_set(&b, true);
-        atomic_set(&i8, 1);
-        atomic_set(&i16, 1);
-        atomic_set(&i32, 1);
-        atomic_set(&i64, 1);
-        EXPECT_EQ(atomic_get(&b), true);
-        EXPECT_EQ(atomic_get(&i8), 1);
-        EXPECT_EQ(atomic_get(&i16), 1);
-        EXPECT_EQ(atomic_get(&i32), 1);
-        EXPECT_EQ(atomic_get(&i64), 1);
-    }
-
-    DEF_case(reset) {
-        atomic_reset(&b);
-        atomic_reset(&i8);
-        atomic_reset(&i16);
-        atomic_reset(&i32);
-        atomic_reset(&i64);
-        EXPECT_EQ(atomic_get(&b), false);
-        EXPECT_EQ(atomic_get(&i8), 0);
-        EXPECT_EQ(atomic_get(&i16), 0);
-        EXPECT_EQ(atomic_get(&i32), 0);
-        EXPECT_EQ(atomic_get(&i64), 0);
+    DEF_case(store) {
+        atomic_store(&b, true);
+        atomic_store(&i8, 1);
+        atomic_store(&i16, 1);
+        atomic_store(&i32, 1);
+        atomic_store(&i64, 1);
+        EXPECT_EQ(atomic_load(&b), true);
+        EXPECT_EQ(atomic_load(&i8), 1);
+        EXPECT_EQ(atomic_load(&i16), 1);
+        EXPECT_EQ(atomic_load(&i32), 1);
+        EXPECT_EQ(atomic_load(&i64), 1);
     }
 
     DEF_case(pointer) {
@@ -164,13 +153,13 @@ DEF_test(atomic) {
         func_t f = (func_t) 8;
         void* p = (void*) 0;
 
-        atomic_swap(&p, 8);
+        atomic_swap(&p, (void*)8);
         EXPECT_EQ(p, (void*)8);
 
-        atomic_compare_swap(&p, 8, 0);
+        atomic_compare_swap(&p, (void*)8, (void*)0);
         EXPECT_EQ(p, (void*)0);
 
-        atomic_set(&f, 0);
+        atomic_store(&f, (void*)0);
         EXPECT_EQ(f, (func_t)0);
     }
 }

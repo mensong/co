@@ -1,127 +1,172 @@
 #include "co/unitest.h"
 #include "co/co.h"
-#include "../src/co/impl/scheduler.h"
+#include "co/thread.h"
 
 namespace test {
 
 DEF_test(co) {
-    EXPECT(co::null_timer_id == co::timer_id_t());
+    int v = 0;
 
-    DEF_case(sched.SchedManager) {
-        int n = (int) FLG_co_sched_num;
-        co::Scheduler* s;
+    DEF_case(wait_group) {
+        co::WaitGroup wg;
+        wg.add(8);
+        for (int i = 0; i < 8; ++i) {
+            go([wg, &v]() {
+                atomic_inc(&v);
+                wg.done();
+            });
+        }
+
+        wg.wait();
+        EXPECT_EQ(v, 8);
+        v = 0;
+    }
+
+    DEF_case(event) {
+        {
+            co::Event ev;
+            co::WaitGroup wg;
+            wg.add(2);
+
+            go([wg, ev, &v]() {
+                ev.wait();
+                if (v == 1) v = 2;
+                wg.done();
+            });
+
+            go([wg, ev, &v]() {
+                if (v == 0) {
+                    v = 1;
+                    ev.signal();
+                }
+                wg.done();
+            });
+
+            wg.wait();
+            EXPECT_EQ(v, 2);
+            v = 0;
+
+            ev.signal();
+            EXPECT_EQ(ev.wait(1), true);
+            EXPECT_EQ(ev.wait(1), false);
+        }
+        {
+            co::Event ev(true); // manual reset
+            co::WaitGroup wg;
+            wg.add(1);
+            go([wg, ev, &v]() {
+                if (ev.wait(32)) {
+                    ev.reset();
+                    v = 1;
+                }
+                wg.done();
+            });
+
+            ev.signal();
+            wg.wait();
+            EXPECT_EQ(v, 1);
+            EXPECT_EQ(ev.wait(1), false);
+            ev.signal();
+            EXPECT_EQ(ev.wait(1), true);
+            EXPECT_EQ(ev.wait(1), true);
+
+            ev.reset();
+            EXPECT_EQ(ev.wait(1), false);
+        }
+    }
+
+    DEF_case(channel) {
+        co::Chan<int> ch;
+        co::WaitGroup wg;
+        wg.add(2);
+
+        go([wg, ch]() {
+            ch << 23;
+            wg.done();
+        });
+
+        go([wg, ch, &v]() {
+            ch >> v;
+            wg.done();
+        });
+
+        wg.wait();
+        EXPECT_EQ(v, 23);
+        v = 0;
+    }
+
+    DEF_case(mutex) {
+        co::Mutex m;
+        co::WaitGroup wg;
+        wg.add(8);
+
+        m.lock();
+        EXPECT_EQ(m.try_lock(), false);
+        m.unlock();
+        EXPECT_EQ(m.try_lock(), true);
+        m.unlock();
+
+        for (int i = 0; i < 4; ++i) {
+            go([wg, m, &v]() {
+                co::MutexGuard g(m);
+                ++v;
+                wg.done();
+            });
+        }
+
+        for (int i = 0; i < 4; ++i) {
+            Thread([wg, m, &v]() {
+                co::MutexGuard g(m);
+                ++v;
+                wg.done();
+            }).detach();
+        }
+
+        wg.wait();
+        EXPECT_EQ(v, 8);
+        v = 0;
+    }
+
+    DEF_case(pool) {
+        co::Pool p(
+            []() { return (void*) new int(0); },
+            [](void* p) { delete (int*)p; },
+            8192
+        );
+
+        int n = co::scheduler_num();
+        co::vector<int> vi(n, 0);
+
+        co::WaitGroup wg;
+        wg.add(n);
+
         for (int i = 0; i < n; ++i) {
-            s = co::sched_mgr()->next();
-            EXPECT_EQ(s->id(), i);
+            go([wg, p, i]() {
+                co::PoolGuard<int> g(p);
+                *g = i;
+                wg.done();
+            });
         }
 
-        s = co::sched_mgr()->next();
-        EXPECT_EQ(s->id(), 0);
-    }
+        wg.wait();
 
-    DEF_case(sched.Copool) {
-        co::Copool pool(4);
-        co::Coroutine* c = pool.pop();
-        co::Coroutine* d = pool.pop();
-        EXPECT_EQ(c->id, 0);
-        EXPECT_EQ(d->id, 1);
-
-        pool.push(d);
-        co::Coroutine* e = pool.pop();
-        EXPECT_EQ(e->id, 1);
-
-        d = pool.pop();
-        EXPECT_EQ(d->id, 2);
-
-        EXPECT_EQ(d, pool[2]);
-        EXPECT_EQ(e, pool[1]);
-        EXPECT_EQ(c, pool[0]);
-
-        co::Coroutine* x = pool.pop();
-        co::Coroutine* y = pool.pop();
-        co::Coroutine* z = pool.pop();
-
-        EXPECT_EQ(d, pool[2]);
-        EXPECT_EQ(e, pool[1]);
-        EXPECT_EQ(c, pool[0]);
-        EXPECT_EQ(x, pool[3]);
-        EXPECT_EQ(y, pool[4]);
-        EXPECT_EQ(z, pool[5]);
-
-        pool.push(c);
-        pool.push(d);
-        pool.push(e);
-        pool.push(x);
-        pool.push(y);
-        pool.push(z);
-    }
-
-    DEF_case(sched.TaskManager) {
-        co::TaskManager mgr;
-        mgr.add_new_task((Closure*)8);
-        mgr.add_new_task((Closure*)16);
-        mgr.add_ready_task((co::Coroutine*)24);
-        mgr.add_ready_task((co::Coroutine*)32);
-        mgr.add_ready_timer_task((co::Coroutine*)40, co::null_timer_id);
-        mgr.add_ready_timer_task((co::Coroutine*)48, co::null_timer_id);
-
-        std::vector<Closure*> cbs;
-        std::vector<co::Coroutine*> cos;
-        std::unordered_map<co::Coroutine*, co::timer_id_t> cts;
-        mgr.get_all_tasks(cbs, cos, cts);
-
-        EXPECT_EQ(cbs.size(), 2);
-        EXPECT_EQ(cos.size(), 2);
-        EXPECT_EQ(cts.size(), 2);
-        EXPECT_EQ(cbs[0], (Closure*)8);
-        EXPECT_EQ(cbs[1], (Closure*)16);
-        EXPECT_EQ(cos[0], (co::Coroutine*)24);
-        EXPECT_EQ(cos[1], (co::Coroutine*)32);
-    }
-
-    DEF_case(sched.TimerManager) {
-        co::TimerManager mgr;
-        std::vector<co::Coroutine*> timeout;
-        uint32 t = mgr.check_timeout(timeout);
-        EXPECT_EQ(timeout.size(), 0);
-        EXPECT_EQ(t, -1);
-
-        std::vector<co::Coroutine*> cos;
-        for (int i = 0; i < 8; ++i) {
-            cos.push_back(new co::Coroutine(i));
+        wg.add(n);
+        for (int i = 0; i < n; ++i) {
+            go([wg, p, i, &vi]() {
+                int* x = (int*) p.pop();
+                vi[i] = *x;
+                p.push(x);
+                wg.done();
+            });
         }
 
-        auto x = mgr.add_timer(64, cos[4]);
-        auto y = mgr.add_io_timer(64, cos[5]);
-
-        mgr.add_timer(4, cos[0]);
-        mgr.add_timer(4, cos[1]);
-        mgr.add_io_timer(4, cos[2]);
-        mgr.add_io_timer(4, cos[3]);
-
-        t = mgr.check_timeout(timeout);
-        EXPECT_EQ(timeout.size(), 0);
-        EXPECT_LE(t, 4);
-
-        cos[2]->state = co::S_ready;
-        sleep::ms(16);
-        t = mgr.check_timeout(timeout);
-        EXPECT_EQ(timeout.size(), 3);
-        EXPECT_LE(t, 50);
-        EXPECT_EQ(mgr.assert_it(x), true);
-
-        EXPECT_EQ(mgr.assert_empty(), false);
-        mgr.del_timer(x);
-        EXPECT_EQ(mgr.assert_it(y), true);
-        mgr.del_timer(y);
-        EXPECT_EQ(mgr.assert_empty(), true);
-
-        for (int i = 0; i < 8; ++i) {
-            delete cos[i];
+        wg.wait();
+        for (size_t i = 0; i < vi.size(); ++i) {
+            EXPECT_EQ(vi[i], i);
         }
-    }
 
-    //DEF_case(epoll) {}
+        p.clear();
+    }
 }
 
-} // namespace test
+} // test

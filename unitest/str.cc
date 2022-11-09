@@ -11,15 +11,15 @@ DEF_test(str) {
         EXPECT_EQ(v[1], "");
         EXPECT_EQ(v[2], "y");
 
-        auto u = str::split(fastring("x||y"), '|');
-        EXPECT(u == v);
+        v = str::split(fastring("x||y"), '|');
+        EXPECT_EQ(v.size(), 3);
+        EXPECT_EQ(v[0], "x");
+        EXPECT_EQ(v[1], "");
+        EXPECT_EQ(v[2], "y");
 
         v = str::split("x||y", '|', 1);
         EXPECT_EQ(v[0], "x");
         EXPECT_EQ(v[1], "|y");
-
-        u = str::split(fastring("x||y"), '|', 1);
-        EXPECT(u == v);
 
         v = str::split("x y", ' ');
         EXPECT_EQ(v.size(), 2);
@@ -32,17 +32,17 @@ DEF_test(str) {
         EXPECT_EQ(v[1], "x");
         EXPECT_EQ(v[2], "y");
 
-        u = str::split(fastring("\nx\ny\n"), '\n');
-        EXPECT(u == v);
+        v = str::split(fastring("\nx\ny\n"), '\n');
+        EXPECT_EQ(v.size(), 3);
+        EXPECT_EQ(v[0], "");
+        EXPECT_EQ(v[1], "x");
+        EXPECT_EQ(v[2], "y");
 
         v = str::split("||x||y||", "||");
         EXPECT_EQ(v.size(), 3);
         EXPECT_EQ(v[0], "");
         EXPECT_EQ(v[1], "x");
         EXPECT_EQ(v[2], "y");
-
-        u = str::split(fastring("||x||y||"), "||");
-        EXPECT(u == v);
 
         v = str::split("||x||y||", "||", 2);
         EXPECT_EQ(v[0], "");
@@ -104,6 +104,44 @@ DEF_test(str) {
         EXPECT_EQ(str::to_uint64("8t"), 8ULL << 40);
 
         EXPECT_EQ(str::to_double("3.14159"), 3.14159);
+
+        // convertion failed
+        EXPECT_EQ(str::to_bool("xxx"), false);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_int32("12345678900"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_int32("-32g"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_int32("-3a2"), 0);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_int64("1234567890123456789000"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_int64("100000P"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_int64("1di8"), 0);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_uint32("123456789000"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_uint32("32g"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_uint32("3g3"), 0);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_uint64("1234567890123456789000"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_uint64("100000P"), 0);
+        EXPECT_EQ(co::error(), ERANGE);
+        EXPECT_EQ(str::to_uint64("12d8"), 0);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_double("3.141d59"), 0);
+        EXPECT_EQ(co::error(), EINVAL);
+
+        EXPECT_EQ(str::to_uint32("32"), 32);
+        EXPECT_EQ(co::error(), 0);
     }
 
     DEF_case(from) {
@@ -115,25 +153,37 @@ DEF_test(str) {
     }
 
     DEF_case(dbg) {
-        std::vector<fastring> v {
-            "xx", "yy"
-        };
-        EXPECT_EQ(str::dbg(v), "[\"xx\",\"yy\"]");
+        std::vector<fastring> v { "xx", "yy" };
+        co::vector<fastring> cv { "xx", "yy" };
+        EXPECT_EQ(str::dbg(v),  "[\"xx\",\"yy\"]");
+        EXPECT_EQ(str::dbg(cv), "[\"xx\",\"yy\"]");
 
-        std::set<int> s {
-            7, 0, 3
-        };
-        EXPECT_EQ(str::dbg(s), "{0,3,7}");
+        std::set<int> s { 7, 0, 3 };
+        co::set<int> cs { 7, 0, 3 };
+        EXPECT_EQ(str::dbg(s),  "{0,3,7}");
+        EXPECT_EQ(str::dbg(cs), "{0,3,7}");
 
-        std::map<int, int> m {
-            {1, 1}, {2, 2}, {3, 3}
-        };
-        EXPECT_EQ(str::dbg(m), "{1:1,2:2,3:3}");
+        std::map<int, int> m { {1, 1}, {2, 2}, {3, 3} };
+        co::map<int, int> cm { {1, 1}, {2, 2}, {3, 3} };
+        EXPECT_EQ(str::dbg(m),  "{1:1,2:2,3:3}");
+        EXPECT_EQ(str::dbg(cm), "{1:1,2:2,3:3}");
 
         std::map<int, fastring> ms {
             {1, "1"}, {2, "2"}, {3, "3"}
         };
         EXPECT_EQ(str::dbg(ms), "{1:\"1\",2:\"2\",3:\"3\"}");
+    }
+
+    DEF_case(cat) {
+        EXPECT_EQ(str::cat(), "");
+        EXPECT_EQ(str::cat(1, 2, 3), "123");
+        EXPECT_EQ(str::cat("hello", 1, 2, 3), "hello123");
+        EXPECT_EQ(str::cat("hello ", false), "hello false");
+        EXPECT_EQ(str::cat("hello ", true, ':', 999), "hello true:999");
+        fastring f("fff");
+        std::string s("sss");
+        const char* c = "ccc";
+        EXPECT_EQ(str::cat(f, s, c, 123), "fffsssccc123");
     }
 }
 

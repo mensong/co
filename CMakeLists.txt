@@ -1,62 +1,68 @@
-cmake_minimum_required(VERSION 3.1)
-project(co)
+cmake_minimum_required(VERSION 3.12)
 
-if(WIN32)
-    if (NOT MSVC)
-        message(FATAL_ERROR, "msvc required on windows")
-    endif()
+if(POLICY CMP0090)
+    cmake_policy(SET CMP0090 NEW)
+endif()
+
+project(coost VERSION 3.0.0)
+
+if(MSVC)
     enable_language(C CXX ASM_MASM)
 else()
     enable_language(C CXX ASM)
 endif()
 
-set(CMAKE_CXX_STANDARD 11)
-option(BUILD_SHARED_LIBS "Let us build static libs" OFF)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
 
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/build/bin)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
-set(CMAKE_DEBUG_POSTFIX "d")
-
-include_directories(include)
-
-if(UNIX)
-    add_compile_options(-Wall -O2 -g3)
+if(MSVC)
+    add_compile_options(/fp:fast /EHsc)
+    add_link_options(/SAFESEH:NO)
+    if(CMAKE_CXX_FLAGS MATCHES "/W[0-4]")
+        string(REGEX REPLACE "/W[0-4]" "/W4" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    else()
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
+    endif()
+else()
+    add_compile_options(-Wall -O2 -g -Wno-sign-compare -Wno-strict-aliasing)
     if(APPLE)
         add_compile_options(-fno-pie)
     endif()
 endif()
 
+
+# build with libcurl (openssl & zlib also required)
+option(WITH_LIBCURL "build with libcurl" OFF)
+
+# build with openssl 1.1.0+
+option(WITH_OPENSSL "build with openssl" OFF)
+
+# build with -fPIC
+option(FPIC "build with -fPIC" OFF)
+
+# build all projects (libco, gen, test, unitest)
+option(BUILD_ALL "Build all projects" OFF)
+
+# vs runtime, use MT
 if(MSVC)
-    add_compile_options(/W4 /fp:fast /EHsc)
-    add_link_options(/SAFESEH:NO)
+    option(STATIC_VS_CRT "use /MT or /MTd" OFF)
+
+    if(STATIC_VS_CRT)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MTd")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+    endif()
 endif()
 
 add_subdirectory(src)
 
-option(BUILD_ALL "To build All" OFF)
-option(BUILD_GEN "To build gen" ON)
-option(BUILD_UNITEST "To build unitest" OFF)
-option(BUILD_TEST "To build test" OFF)
-
 if(BUILD_ALL)
-    message("To build all")
+    enable_testing()
     add_subdirectory(gen)
     add_subdirectory(unitest)
-    add_subdirectory(test)
-elseif(BUILD_GEN)
-    message("To build gen")
-    add_subdirectory(gen)
-elseif(BUILD_UNITEST)
-    message("To build unitest")
-    add_subdirectory(unitest)
-elseif(BUILD_TEST)
-    message("To build test")
     add_subdirectory(test)
 endif()
-
-install(
-    DIRECTORY include/co
-    DESTINATION include
-)

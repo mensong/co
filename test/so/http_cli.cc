@@ -1,39 +1,76 @@
 #include "co/all.h"
 
-DEF_string(ip, "127.0.0.1", "http server ip or dns");
-DEF_int32(port, 80, "http server port");
-DEF_int32(n, 1, "req num");
+DEF_string(s, "https://github.com", "server url");
+DEF_string(m, "", "method, GET, POST, DELETE, PUT");
+DEF_string(url, "", "url of http request");
+DEF_string(data, "{\"api\":\"ping\"}", "data to send");
+DEF_string(path, "", "for PUT, path of the file to be uploaded");
 
-SyncEvent ev;
+co::WaitGroup wg;
 
-void fun() {
-    http::Client cli(FLG_ip.c_str(), FLG_port);
- 
-    for (int i = 0; i < FLG_n; ++i) {
-        fastring s = cli.get("/");
-        COUT << "content length: " << s.size();
+void fa() {
+    http::Client c(FLG_s.c_str());
+
+    int r;
+    LOG << "get /";
+    c.get("/");
+    r = c.status();
+    LOG << "response code: " << r;
+    LOG_IF(r == 0) << "error: " << c.strerror();
+    LOG << "body size: " << c.body().size();
+    LOG << "Content-Length: " << c.header("Content-Length");
+    LOG << "Content-Type: " << c.header("Content-Type");
+    LOG << c.header();
+
+    LOG << "get /idealvin/co";
+    c.get("/idealvin/co");
+    r = c.status();
+    LOG << "response code: " << r;
+    LOG_IF(r == 0) << "error: " << c.strerror();
+    LOG << "body size: " << c.body().size();
+    LOG << "Content-Length: " << c.header("Content-Length");
+    LOG << "Content-Type: " << c.header("Content-Type");
+    LOG << c.header();
+
+    // close the client before sending a signal
+    c.close();
+    wg.done();
+}
+
+void fb() {
+    http::Client c(FLG_s.c_str());
+    COUT << FLG_m << " " << FLG_url;
+    if (FLG_m == "GET") {
+        c.get(FLG_url.c_str());
+    } else if (FLG_m == "POST") {
+        c.post(FLG_url.c_str(), FLG_data.c_str());
+    } else if (FLG_m == "PUT") {
+        if (!FLG_path.empty()) {
+            c.put(FLG_url.c_str(), FLG_path.c_str());
+        }
+    } else if (FLG_m == "DELETE") {
+        c.del(FLG_url.c_str());
+    } else {
+        LOG << "method not supported: " << FLG_m;
     }
-   
-    for (int i = 0; i < FLG_n; ++i) {
-        http::Req req;
-        http::Res res;
-        req.set_version_http10();
-        req.set_method_get();
-        req.set_url("/");
-        cli.call(req, res);
-        COUT << "content length: " << res.body_len();
-    }
 
-    ev.signal();
+    LOG << c.header();
+    LOG << c.body();
+    c.close();
+    wg.done();
 }
 
 int main(int argc, char** argv) {
     flag::init(argc, argv);
-    log::init();
+    FLG_cout = true;
 
-    go(fun);
+    wg.add();
+    if (FLG_m.empty() && FLG_url.empty()) {
+        go(fa);
+    } else {
+        go(fb);
+    }
+    wg.wait();
 
-    ev.wait();
-    co::stop();
     return 0;
 }

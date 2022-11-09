@@ -2,385 +2,272 @@
 
 #include "def.h"
 #include "closure.h"
-#include "byte_order.h"
-#include "fastring.h"
-
-#ifdef _WIN32
-#include <WinSock2.h>
-#include <ws2tcpip.h> // for inet_ntop...
-#include <MSWSock.h>
-#pragma comment(lib, "Ws2_32.lib")
-
-typedef SOCKET sock_t;
-
-#else
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/socket.h>  // basic socket api, struct linger
-#include <netinet/in.h>  // for struct sockaddr_in
-#include <netinet/tcp.h> // for TCP_NODELAY...
-#include <arpa/inet.h>   // for inet_ntop...
-#include <netdb.h>       // getaddrinfo, gethostby...
-
-typedef int sock_t;
-#endif
+#include "flag.h"
+#include "log.h"
+#include "stl.h"
+#include "./co/sock.h"
+#include "./co/event.h"
+#include "./co/mutex.h"
+#include "./co/pool.h"
+#include "./co/chan.h"
+#include "./co/io_event.h"
+#include "./co/wait_group.h"
 
 namespace co {
 
-// Add a task, which will run as a coroutine.
-// Supported function types:
-//   void f();
-//   void f(void*);          // func with a param
-//   void T::f();            // method in a class
-//   std::function<void()>;
-void go(Closure* cb);
+/**
+ * add a task, which will run as a coroutine 
+ *   - It is thread-safe and can be called from anywhere. 
+ *   - Closure created by new_closure() will delete itself after Closure::run() 
+ *     is done. Users MUST NOT delete it manually.
+ *   - Closure is an abstract base class, users are free to implement their own 
+ *     subtype of Closure. This may be useful if users do not want a Closure to 
+ *     delete itself. See details in co/closure.h.
+ * 
+ * @param cb  a pointer to a Closure created by new_closure(), or an user-defined Closure.
+ */
+__coapi void go(Closure* cb);
 
-inline void go(void (*f)()) {
-    go(new_callback(f));
+/**
+ * add a task, which will run as a coroutine 
+ *   - eg.
+ *     go(f);               // void f(); 
+ *     go([]() { ... });    // lambda 
+ *     go(std::bind(...));  // std::bind 
+ * 
+ *     std::function<void()> x(std::bind(...)); 
+ *     go(x);               // std::function<void()> 
+ *     go(&x);              // std::function<void()>* 
+ *
+ *   - If f is a pointer to std::function<void()>, users MUST ensure that the 
+ *     object f points to is valid when Closure::run() is running. 
+ * 
+ * @param f  any runnable object, as long as we can call f() or (*f)().
+ */
+template<typename F>
+inline void go(F&& f) {
+    go(new_closure(std::forward<F>(f)));
 }
 
-inline void go(void (*f)(void*), void* p) {
-    go(new_callback(f, p));
+/**
+ * add a task, which will run as a coroutine 
+ *   - eg.
+ *     go(f, 8);   // void f(int);
+ *     go(f, p);   // void f(void*);   void* p;
+ *     go(f, o);   // void (T::*f)();  T* o;
+ * 
+ *     std::function<void(P)> x(std::bind(...));
+ *     go(x, p);   // P p;
+ *     go(&x, p);  // P p; 
+ *
+ *   - If f is a pointer to std::function<void(P)>, users MUST ensure that the 
+ *     object f points to is valid when Closure::run() is running. 
+ *
+ * @param f  any runnable object, as long as we can call f(p), (*f)(p) or (p->*f)().
+ * @param p  parameter of f, or a pointer to an object of class P if f is a method.
+ */
+template<typename F, typename P>
+inline void go(F&& f, P&& p) {
+    go(new_closure(std::forward<F>(f), std::forward<P>(p)));
 }
 
-template<typename T>
-inline void go(void (T::*f)(), T* p) {
-    go(new_callback(f, p));
+/**
+ * add a task, which will run as a coroutine 
+ *   - eg.
+ *     go(f, o, p);   // void (T::*f)(P);  T* o;  P p;
+ 
+ * @param f  a pointer to a method with a parameter in class T.
+ * @param t  a pointer to an object of class T.
+ * @param p  parameter of f.
+ */
+template<typename F, typename T, typename P>
+inline void go(F&& f, T* t, P&& p) {
+    go(new_closure(std::forward<F>(f), t, std::forward<P>(p)));
 }
 
-// !! Performance of std::function is poor. Try to avoid it.
-inline void go(const std::function<void()>& f) {
-    go(new_callback(f));
-}
+/**
+ * define main function
+ *   - DEF_main can be used to ensure code in main function also runs in coroutine. 
+ */
+#define DEF_main(argc, argv) \
+int _co_main(int argc, char** argv); \
+int main(int argc, char** argv) { \
+    flag::init(argc, argv); \
+    int r; \
+    co::WaitGroup wg(1); \
+    go([&](){ \
+        r = _co_main(argc, argv); \
+        wg.done(); \
+    }); \
+    wg.wait(); \
+    return r; \
+} \
+int _co_main(int argc, char** argv)
 
-inline void go(std::function<void()>&& f) {
-    go(new_callback(std::move(f)));
-}
 
-void sleep(unsigned int ms);
-
-// stop coroutine schedulers
-void stop();
-
-// max number of schedulers. It is os::cpunum() right now.
-// scheduler id is from 0 to max_sched_num-1.
-int max_sched_num();
-
-// id of the current scheduler, -1 for non-scheduler
-int sched_id();
-
-// id of the current coroutine, -1 for non-coroutine
-int coroutine_id();
-
-// co::Event is for communications between coroutines.
-// It's similar to SyncEvent for threads.
-class Event {
+class __coapi Scheduler {
   public:
-    Event();
-    ~Event();
+    void go(Closure* cb);
 
-    Event(Event&& e) : _p(e._p) { e._p = 0; }
+    template<typename F>
+    inline void go(F&& f) {
+        this->go(new_closure(std::forward<F>(f)));
+    }
 
-    Event(const Event&) = delete;
-    void operator=(const Event&) = delete;
+    template<typename F, typename P>
+    inline void go(F&& f, P&& p) {
+        this->go(new_closure(std::forward<F>(f), std::forward<P>(p)));
+    }
 
-    // MUST be called in coroutine
-    void wait();
+    template<typename F, typename T, typename P>
+    inline void go(F&& f, T* t, P&& p) {
+        this->go(new_closure(std::forward<F>(f), t, std::forward<P>(p)));
+    }
 
-    // return false if timeout
-    // MUST be called in coroutine
-    bool wait(unsigned int ms);
-
-    // wakeup all waiting coroutines
-    // can be called from anywhere
-    void signal();
-
-  private:
-    void* _p;
+  protected:
+    Scheduler() = default;
+    ~Scheduler() = default;
 };
 
-// co::Mutex is a mutex lock for coroutines.
-// It's similar to Mutex for threads.
-class Mutex {
-  public:
-    Mutex();
-    ~Mutex();
+/**
+ * get all schedulers 
+ *   
+ * @return  a reference of an array, which stores pointers to all the Schedulers
+ */
+__coapi const co::vector<Scheduler*>& schedulers();
 
-    Mutex(Mutex&& m) : _p(m._p) { m._p = 0; }
+/**
+ * get the current scheduler
+ * 
+ * @return a pointer to the current scheduler, or NULL if called from a non-scheduler thread.
+ */
+__coapi Scheduler* scheduler();
 
-    Mutex(const Mutex&) = delete;
-    void operator=(const Mutex&) = delete;
+/**
+ * get the current coroutine
+ * 
+ * @return a pointer to the current coroutine
+ */
+__coapi void* coroutine();
 
-    // MUST be called in coroutine
-    void lock();
+/**
+ * get next scheduler 
+ *   - It is useful when users want to create coroutines in the same scheduler. 
+ *   - eg. 
+ *     auto s = co::next_scheduler();
+ *     s->go(f);     // void f();
+ *     s->go(g, 7);  // void g(int);
+ * 
+ * @return a non-null pointer.
+ */
+__coapi Scheduler* next_scheduler();
 
-    // can be called from anywhere
-    void unlock();
+/**
+ * get number of schedulers 
+ *   - scheduler id is from 0 to scheduler_num() - 1. 
+ *   - This function may be used to implement scheduler-local storage:  
+ *                co::vector<T> xx(co::scheduler_num());  
+ *     xx[co::scheduler_id()] can be used in a coroutine to access the storage for 
+ *     the current scheduler thread.
+ * 
+ * @return  total number of the schedulers.
+ */
+__coapi int scheduler_num();
 
-    // can be called from anywhere
-    bool try_lock();
+/**
+ * get id of the current scheduler 
+ *   - It is EXPECTED to be called in a coroutine. 
+ * 
+ * @return  a non-negative id of the current scheduler, or -1 if the current thread 
+ *          is not a scheduler thread.
+ */
+__coapi int scheduler_id();
 
-  private:
-    void* _p;
-};
+/**
+ * get id of the current coroutine 
+ *   - It is EXPECTED to be called in a coroutine. 
+ *   - Each cocoutine has a unique id. 
+ * 
+ * @return  a non-negative id of the current coroutine, or -1 if the current thread 
+ *          is not a scheduler thread.
+ */
+__coapi int coroutine_id();
 
-class MutexGuard {
-  public:
-    explicit MutexGuard(co::Mutex& lock) : _lock(lock) {
-        _lock.lock();
-    }
+/**
+ * add a timer for the current coroutine 
+ *   - It MUST be called in a coroutine.
+ *   - Users MUST call yield() to suspend the coroutine after a timer was added.
+ *     When the timer expires, the scheduler will resume the coroutine.
+ *
+ * @param ms  timeout in milliseconds.
+ */
+__coapi void add_timer(uint32 ms);
 
-    explicit MutexGuard(co::Mutex* lock) : _lock(*lock) {
-        _lock.lock();
-    }
+/**
+ * add an IO event on a socket to the epoll 
+ *   - It MUST be called in a coroutine.
+ *   - Users MUST call yield() to suspend the coroutine after an event was added.
+ *     When the event is present, the scheduler will resume the coroutine.
+ *
+ * @param fd  the socket.
+ * @param ev  an IO event, either ev_read or ev_write.
+ *
+ * @return    true on success, false on error.
+ */
+__coapi bool add_io_event(sock_t fd, io_event_t ev);
 
-    MutexGuard(const MutexGuard&) = delete;
-    void operator=(const MutexGuard&) = delete;
+/**
+ * delete an IO event from epoll
+ *   - It MUST be called in a coroutine.
+ */
+__coapi void del_io_event(sock_t fd, io_event_t ev);
 
-    ~MutexGuard() {
-        _lock.unlock();
-    }
+/**
+ * remove all events on the socket 
+ *   - It MUST be called in a coroutine.
+ */
+__coapi void del_io_event(sock_t fd);
 
-  private:
-    co::Mutex& _lock;
-};
+/**
+ * suspend the current coroutine 
+ *   - It MUST be called in a coroutine. 
+ *   - Usually, users should add an IO event, or a timer, or both in a coroutine, 
+ *     and then call yield() to suspend the coroutine. When the event is present 
+ *     or the timer expires, the scheduler will resume the coroutine. 
+ */
+__coapi void yield();
 
-// co::Pool is a general pool for coroutines.
-// It stores void* pointers internally.
-// It is coroutine-safe. Each thread has its own pool.
-class Pool {
-  public:
-    Pool();
-    ~Pool();
+/**
+ * resume the coroutine
+ *   - It is thread safe and can be called anywhere.
+ * 
+ * @param co  a pointer to the coroutine (result of co::coroutine())
+ */
+__coapi void resume(void* co);
 
-    // @ccb:  a create callback       []() { return (void*) new T; }
-    //   when pop from an empty pool, this callback is used to create an element
-    //
-    // @dcb:  a destroy callback      [](void* p) { delete (T*)p; }
-    //   this callback is used to destroy an element when needed
-    //
-    // @cap:  max capacity of the pool for each thread
-    //   this argument is ignored if the destory callback is not set
-    Pool(std::function<void*()>&& ccb, std::function<void(void*)>&& dcb, size_t cap=(size_t)-1);
+/**
+ * sleep for milliseconds 
+ *   - It is EXPECTED to be called in a coroutine. 
+ * 
+ * @param ms  time in milliseconds
+ */
+__coapi void sleep(uint32 ms);
 
-    Pool(Pool&& p) : _p(p._p) { p._p = 0; }
+/**
+ * check whether the current coroutine has timed out 
+ *   - It MUST be called in a coroutine.
+ *   - When a coroutine returns from an API with a timeout like co::recv, users may 
+ *     call co::timeout() to check whether the API call has timed out. 
+ * 
+ * @return  true if timed out, otherwise false.
+ */
+__coapi bool timeout();
 
-    Pool(const Pool&) = delete;
-    void operator=(const Pool&) = delete;
-
-    // pop an element from the pool
-    // return NULL if the pool is empty and the create callback is not set
-    // MUST be called in coroutine
-    void* pop();
-
-    // push an element to the pool
-    // nothing is done if p is NULL
-    // MUST be called in coroutine
-    void push(void* p);
-
-  private:
-    void* _p;
-};
-
-// pop an element from co::Pool in constructor, and push it back in destructor.
-// The element is stored internally as a pointer of type T*.
-// As owner of the pointer, its behavior is similar to std::unique_ptr.
-template<typename T>
-class PoolGuard {
-  public:
-    explicit PoolGuard(Pool& pool) : _pool(pool) {
-        _p = (T*) _pool.pop();
-    }
-
-    explicit PoolGuard(Pool* pool) : _pool(*pool) {
-        _p = (T*) _pool.pop();
-    }
-
-    PoolGuard(const PoolGuard&) = delete;
-    void operator=(const PoolGuard&) = delete;
-
-    ~PoolGuard() {
-        _pool.push(_p);
-    }
-
-    T* get() const {
-        return _p;
-    }
-
-    void reset(T* p = 0) {
-        if (_p != p) { delete _p; _p = p; }
-    }
-
-    void operator=(T* p) {
-        this->reset(p);
-    }
-
-    T* operator->() const {
-        return _p;
-    }
-
-    bool operator==(T* p) const {
-        return _p == p;
-    }
-
-    bool operator!=(T* p) const {
-        return _p != p;
-    }
-
-  private:
-    Pool& _pool;
-    T* _p;
-};
-
-// return a non-blocking socket on Linux & Mac, an overlapped socket on windows
-// @domain: address family, AF_INET, AF_INET6, etc.
-// @type:   socket type, SOCK_STREAM, SOCK_DGRAM, etc.
-// @proto:  protocol, IPPROTO_TCP, IPPROTO_UDP, etc.
-sock_t socket(int domain, int type, int proto);
-
-// @af: address family, AF_INET, AF_INET6, etc.
-inline sock_t tcp_socket(int af=AF_INET) {
-    return co::socket(af, SOCK_STREAM, IPPROTO_TCP);
-}
-
-// @af: address family, AF_INET, AF_INET6, etc.
-inline sock_t udp_socket(int af=AF_INET) {
-    return co::socket(af, SOCK_DGRAM, IPPROTO_UDP);
-}
-
-// close the fd @ms milliseconds later
-int close(sock_t fd, int ms=0);
-
-// @c:  'r' for SHUT_RD, 'w' for SHUT_WR, 'b' for SHUT_RDWR
-int shutdown(sock_t fd, char c='b');
-
-int bind(sock_t fd, const void* addr, int addrlen);
-
-int listen(sock_t fd, int backlog);
-
-// return a non-blocking socket on Linux & Mac, an overlapped socket on windows
-sock_t accept(sock_t fd, void* addr, int* addrlen);
-
-// connect until connection is done or timeout in @ms, or any error occured
-int connect(sock_t fd, const void* addr, int addrlen, int ms=-1);
-
-// recv until 0 or more bytes are received or timeout in @ms, or any error occured
-int recv(sock_t fd, void* buf, int n, int ms=-1);
-
-// recv until all @n bytes are done or timeout in @ms, or any error occured
-int recvn(sock_t fd, void* buf, int n, int ms=-1);
-
-int recvfrom(sock_t fd, void* buf, int n, void* addr, int* addrlen, int ms=-1);
-
-// send until all @n bytes are done or timeout in @ms, or any error occured
-int send(sock_t fd, const void* buf, int n, int ms=-1);
-
-// for udp, max(n) == 65507
-int sendto(sock_t fd, const void* buf, int n, const void* addr, int addrlen, int ms=-1);
-
-#ifdef _WIN32
-inline int getsockopt(sock_t fd, int lv, int opt, void* optval, int* optlen) {
-    return ::getsockopt(fd, lv, opt, (char*)optval, optlen);
-}
-
-inline int setsockopt(sock_t fd, int lv, int opt, const void* optval, int optlen) {
-    return ::setsockopt(fd, lv, opt, (const char*)optval, optlen);
-}
-#else
-inline int getsockopt(sock_t fd, int lv, int opt, void* optval, int* optlen) {
-    return ::getsockopt(fd, lv, opt, optval, (socklen_t*)optlen);
-}
-
-inline int setsockopt(sock_t fd, int lv, int opt, const void* optval, int optlen) {
-    return ::setsockopt(fd, lv, opt, optval, (socklen_t)optlen);
-}
-#endif
-
-inline void set_reuseaddr(sock_t fd) {
-    int v = 1;
-    co::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
-}
-
-// !! send/recv buffer size must be set before the socket is connected.
-inline void set_send_buffer_size(sock_t fd, int n) {
-    co::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &n, sizeof(n));
-}
-
-inline void set_recv_buffer_size(sock_t fd, int n) {
-    co::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n));
-}
-
-inline void set_tcp_nodelay(sock_t fd) {
-    int v = 1;
-    co::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &v, sizeof(v));
-}
-
-inline void set_tcp_keepalive(sock_t fd) {
-    int v = 1;
-    co::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &v, sizeof(v));
-}
-
-// reset tcp connection @ms milliseconds later
-inline void reset_tcp_socket(sock_t fd, int ms=0) {
-    struct linger v = { 1, 0 };
-    co::setsockopt(fd, SOL_SOCKET, SO_LINGER, &v, sizeof(v));
-    co::close(fd, ms);
-}
-
-#ifndef _WIN32
-inline void set_nonblock(sock_t fd) {
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-}
-
-inline void set_cloexec(sock_t fd) {
-    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-}
-#endif
-
-// fill in ipv4 addr with ip & port
-inline bool init_ip_addr(struct sockaddr_in* addr, const char* ip, int port) {
-    memset(addr, 0, sizeof(*addr));
-    addr->sin_family = AF_INET;
-    addr->sin_port = hton16((uint16) port);
-    return inet_pton(AF_INET, ip, &addr->sin_addr) == 1;
-}
-
-// fill in ipv6 addr with ip & port
-inline bool init_ip_addr(struct sockaddr_in6* addr, const char* ip, int port) {
-    memset(addr, 0, sizeof(*addr));
-    addr->sin6_family = AF_INET6;
-    addr->sin6_port = hton16((uint16) port);
-    return inet_pton(AF_INET6, ip, &addr->sin6_addr) == 1;
-}
-
-// get ip string from ipv4 addr
-inline fastring ip_str(struct sockaddr_in* addr) {
-    char s[INET_ADDRSTRLEN] = { 0 };
-    inet_ntop(AF_INET, &addr->sin_addr, s, sizeof(s));
-    return fastring(s);
-}
-
-// get ip string from ipv6 addr
-inline fastring ip_str(struct sockaddr_in6* addr) {
-    char s[INET6_ADDRSTRLEN] = { 0 };
-    inet_ntop(AF_INET6, &addr->sin6_addr, s, sizeof(s));
-    return fastring(s);
-}
-
-#ifdef _WIN32
-inline int error() { return WSAGetLastError(); }
-#else
-inline int error() { return errno; }
-#endif
-
-// thread-safe strerror
-const char* strerror(int err);
-
-inline const char* strerror() {
-    return co::strerror(co::error());
-}
+/**
+ * check whether a pointer is on the stack of the current coroutine 
+ *   - It MUST be called in a coroutine. 
+ */
+__coapi bool on_stack(const void* p);
 
 } // namespace co
 

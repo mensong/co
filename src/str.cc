@@ -1,5 +1,4 @@
 #include "co/str.h"
-#include <errno.h>
 #include <math.h>
 #include <algorithm>
 
@@ -10,8 +9,9 @@
 
 namespace str {
 
-std::vector<fastring> split(const char* s, char c, uint32 maxsplit) {
-    std::vector<fastring> v;
+co::vector<fastring> split(const char* s, char c, uint32 maxsplit) {
+    co::vector<fastring> v;
+    v.reserve(8);
 
     const char* p;
     const char* from = s;
@@ -26,8 +26,9 @@ std::vector<fastring> split(const char* s, char c, uint32 maxsplit) {
     return v;
 }
 
-std::vector<fastring> split(const fastring& s, char c, uint32 maxsplit) {
-    std::vector<fastring> v;
+co::vector<fastring> split(const fastring& s, char c, uint32 maxsplit) {
+    co::vector<fastring> v;
+    v.reserve(8);
 
     const char* p;
     const char* from = s.data();
@@ -43,8 +44,9 @@ std::vector<fastring> split(const fastring& s, char c, uint32 maxsplit) {
     return v;
 }
 
-std::vector<fastring> split(const char* s, const char* c, uint32 maxsplit) {
-    std::vector<fastring> v;
+co::vector<fastring> split(const char* s, const char* c, uint32 maxsplit) {
+    co::vector<fastring> v;
+    v.reserve(8);
 
     const char* p;
     const char* from = s;
@@ -215,27 +217,40 @@ fastring strip(const fastring& s, const fastring& c, char d) {
     }
 }
 
+// co::error() is equal to errno on linux/mac, that's not the fact on windows.
+#ifdef _WIN32
+#define _co_set_error(e) co::error() = e
+#define _co_reset_error() do { errno = 0; co::error() = 0; } while (0)
+#else
+#define _co_set_error(e)
+#define _co_reset_error() errno = 0
+#endif
+
 bool to_bool(const char* s) {
+    co::error() = 0;
     if (strcmp(s, "false") == 0 || strcmp(s, "0") == 0) return false;
     if (strcmp(s, "true") == 0 || strcmp(s, "1") == 0) return true;
-    throw "invalid value for bool";
+    co::error() = EINVAL;
+    return false;
 }
 
 int32 to_int32(const char* s) {
     int64 x = to_int64(s);
-    if (x > MAX_INT32 || x < MIN_INT32) {
-        throw "out of range for int32";
+    if (unlikely(x > MAX_INT32 || x < MIN_INT32)) {
+        co::error() = ERANGE;
+        return 0;
     }
-    return (int32) x;
+    return (int32)x;
 }
 
 uint32 to_uint32(const char* s) {
     int64 x = (int64) to_uint64(s);
     int64 absx = x < 0 ? -x : x;
-    if (absx > MAX_UINT32) {
-        throw "out of range for uint32";
+    if (unlikely(absx > MAX_UINT32)) {
+        co::error() = ERANGE;
+        return 0;
     }
-    return (uint32) x;
+    return (uint32)x;
 }
 
 inline int _Shift(char c) {
@@ -261,14 +276,14 @@ inline int _Shift(char c) {
 }
 
 int64 to_int64(const char* s) {
+    _co_reset_error();
     if (!*s) return 0;
 
     char* end = 0;
     int64 x = strtoll(s, &end, 0);
-
-    if (errno == ERANGE && (x == MIN_INT64 || x == MAX_INT64)) {
-        errno = 0;
-        throw "out of range for int64";
+    if (errno != 0) {
+        _co_set_error(errno);
+        return 0;
     }
 
     size_t n = strlen(s);
@@ -278,63 +293,65 @@ int64 to_int64(const char* s) {
         int shift = _Shift(s[n - 1]);
         if (shift != 0) {
             if (x == 0) return 0;
-
             if (x < (MIN_INT64 >> shift) || x > (MAX_INT64 >> shift)) {
-                throw "out of range for int64";
+                co::error() = ERANGE;
+                return 0;
             }
-
             return x << shift;
         }
     }
 
-    throw "invalid value for integer";
+    co::error() = EINVAL;
+    return 0;
 }
 
 uint64 to_uint64(const char* s) {
+    _co_reset_error();
     if (!*s) return 0;
 
     char* end = 0;
-    int64 x = (int64) strtoull(s, &end, 0);
-
-    if (errno == ERANGE && static_cast<uint64>(x) == MAX_UINT64) {
-        errno = 0;
-        throw "out of range for uint64";
+    uint64 x = strtoull(s, &end, 0);
+    if (errno != 0) {
+        _co_set_error(errno);
+        return 0;
     }
 
     size_t n = strlen(s);
-    if (end == s + n) return (uint64) x;
+    if (end == s + n) return x;
 
     if (end == s + n - 1) {
         int shift = _Shift(s[n - 1]);
         if (shift != 0) {
             if (x == 0) return 0;
-
-            int64 absx = x < 0 ? -x : x;
+            int64 absx = (int64)x;
+            if (absx < 0) absx = -absx;
             if (absx > static_cast<int64>(MAX_UINT64 >> shift)) {
-                throw "out of range for uint64";
+                co::error() = ERANGE;
+                return 0;
             }
-
-            return static_cast<uint64>(x << shift);
+            return x << shift;
         }
     }
 
-    throw "invalid value for integer";
+    co::error() = EINVAL;
+    return 0;
 }
 
 double to_double(const char* s) {
+    _co_reset_error();
     char* end = 0;
     double x = strtod(s, &end);
-
-    if (errno == ERANGE && (x == HUGE_VAL || x == -HUGE_VAL)) {
-        errno = 0;
-        throw "out of range for double";
+    if (errno != 0) {
+        _co_set_error(errno);
+        return 0;
     }
 
-    if (end != s + strlen(s)) {
-        throw "invalid value for double";
-    }
-
-    return x;
+    if (end == s + strlen(s)) return x;
+    co::error() = EINVAL;
+    return 0;
 }
+
+#undef _co_set_error
+#undef _co_reset_error
 
 } // namespace str

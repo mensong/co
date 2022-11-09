@@ -7,61 +7,37 @@
 #pragma once
 
 #include "../def.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
 
-uint32_t murmur_hash32(const void* data, size_t len, uint32_t seed);
-uint64_t murmur_hash64(const void* data, size_t len, uint64_t seed);
+/**
+ * 32 bit murmur hash 
+ * 
+ * @param s  a pointer to the data, it may not work on some systems if s is not 
+ *           4-byte aligned.
+ * @param n  size of the data.
+ */
+__coapi uint32_t murmur_hash32(const void* s, size_t n, uint32_t seed);
 
-// murmur2 64 bit hash
-inline uint64 hash64(const void* s, size_t n) {
-    return murmur_hash64(s, n, 0);
-}
+/**
+ * 64 bit murmur hash
+ * 
+ * @param s  a pointer to the data, it may not work on some systems if s is not 
+ *           8-byte aligned.
+ * @param n  size of the data.
+ */
+__coapi uint64_t murmur_hash64(const void* s, size_t n, uint64_t seed);
 
-inline uint64 hash64(const char* s) {
-    return hash64(s, strlen(s));
-}
-
-template<typename S>
-inline uint64 hash64(const S& s) {
-    return hash64(s.data(), s.size());
-}
-
-#ifdef ARCH64
-// use the lower 32 bit of murmur_hash64 on 64 bit platform
-inline uint32 hash32(const void* s, size_t n) {
-    return (uint32) hash64(s, n);
-}
-
+/**
+ * platform-specific murmur hash 
+ *   - This function returns a hash value of type size_t, instead of uint32 or uint64, 
+ *     which is to say, it is a 32 bit value on 32 bit platforms, or a 64 bit value on 
+ *     64 bit platforms. 
+ */
+#if __arch64
 inline size_t murmur_hash(const void* s, size_t n) {
     return murmur_hash64(s, n, 0);
 }
 #else
-// use murmur_hash32 on 32 bit platform
-inline uint32 hash32(const void* s, size_t n) {
-    return murmur_hash32(s, n, 0);
-}
-
 inline size_t murmur_hash(const void* s, size_t n) {
     return murmur_hash32(s, n, 0);
 }
 #endif
-
-inline uint32 hash32(const char* s) {
-    return hash32(s, strlen(s));
-}
-
-template<typename S>
-inline uint32 hash32(const S& s) {
-    return hash32(s.data(), s.size());
-}
-
-inline size_t murmur_hash(const char* s) {
-    return murmur_hash(s, strlen(s));
-}
-
-template<typename S>
-inline size_t murmur_hash(const S& s) {
-    return murmur_hash(s.data(), s.size());
-}

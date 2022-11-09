@@ -1,281 +1,602 @@
-## Basic [(中文)](readme_cn.md)
+# Coost
 
-`CO` is an elegant and efficient C++ base library that supports Linux, Windows and Mac platforms. It pursues minimalism and efficiency, and does not rely on third-party library such as [boost](https://www.boost.org/).
+English | [简体中文](readme_cn.md)
 
-`CO` includes coroutine library (golang-style), network library (tcp/http/rpc), log library, command line and configuration file parsing library, unit testing framework, json library and other basic components.
-
-
-## Documents
-
-- [English](https://idealvin.gitee.io/coding/2020/07/co_en/)
-- [中文](https://idealvin.gitee.io/coding/2020/07/co/)
+[![Linux Build](https://img.shields.io/github/workflow/status/idealvin/coost/Linux/master.svg?logo=linux)](https://github.com/idealvin/coost/actions?query=workflow%3ALinux)
+[![Windows Build](https://img.shields.io/github/workflow/status/idealvin/coost/Windows/master.svg?logo=windows)](https://github.com/idealvin/coost/actions?query=workflow%3AWindows)
+[![Mac Build](https://img.shields.io/github/workflow/status/idealvin/coost/macOS/master.svg?logo=apple)](https://github.com/idealvin/coost/actions?query=workflow%3AmacOS)
+[![Release](https://img.shields.io/github/release/idealvin/coost.svg)](https://github.com/idealvin/coost/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 
-## Highlights
-
-- **[co](https://github.com/idealvin/co/tree/master/src/co)**
-
-  `co` is a [golang-style](https://github.com/golang/go) C++ coroutine library with the following features:
-
-  - Support multi-thread scheduling, the default number of threads is the number of system CPU cores.
-  - Coroutines share the thread stack (the default size is 1MB), and the memory footprint is extremely low, a single machine can easily create millions of coroutines.
-  - Support system api hook (Linux & Mac).
-  - Support coroutine lock [co::Mutex](https://github.com/idealvin/co/blob/master/src/co/impl/co.cc).
-  - Support coroutine synchronization event [co::Event](https://github.com/idealvin/co/blob/master/src/co/impl/co.cc).
-  - Support coroutine pool [co::Pool](https://github.com/idealvin/co/blob/master/src/co/impl/co.cc).
-
-  -  create coroutine with `go()`:
-  ```cpp
-  void fun() {
-      std::cout << "hello world" << std::endl;
-  }
-  
-  go(fun);
-  ```
-
-- **[so](https://github.com/idealvin/co/tree/master/src/so)**
-
-  `so` is a C++ network library based on coroutines. You can easily write network programs that support both `ipv4` and `ipv6` with this library. It includes the following modules:
-
-  - tcp module, supports general tcp programming.
-  - http module, supports basic http programming.
-  - rpc module, implements a rpc framework based on json, single-threaded qps can reach 120k+.
-
-  - Write a **static web server**:
-  ```cpp
-  #include "co/flag.h"
-  #include "co/log.h"
-  #include "co/so.h"
-
-  DEF_string(d, ".", "root dir"); // Specify the root directory of the web server
-
-  int main(int argc, char** argv) {
-      flag::init(argc, argv);
-      log::init();
-
-      so::easy(FLG_d.c_str()); // mum never have to worry again
-
-      return 0;
-  }
-  ```
-
-  - Write a general http server
-  ```cpp
-  http::Server serv("0.0.0.0", 80);
-
-  serv.on_req(
-      [](const http::Req& req, http::Res& res) {
-          if (req.is_method_get()) {
-              if (req.url() == "/hello") {
-                  res.set_status(200);
-                  res.set_body("hello world");
-              } else {
-                  res.set_status(404);
-              }
-          } else {
-              res.set_status(501);
-          }
-      }
-  );
-
-  serv.start();
-  ```
-
-- **[log](https://github.com/idealvin/co/blob/master/src/log.cc)**
-
-  `log` is a super fast local logging system, printing logs is safer than `printf`:
-  ```cpp
-  LOG << "hello "<< 23;   // info
-  ELOG << "hello again";  // error
-  ```
-
-  Let's see how fast it is below:
-
-  | log vs glog | google glog | co/log |
-  | ------ | ------ | ------ |
-  | win2012 HHD | 1.6MB/s | 180MB/s |
-  | win10 SSD | 3.7MB/s | 560MB/s |
-  | mac SSD | 17MB/s | 450MB/s |
-  | linux SSD | 54MB/s | 1023MB/s |
-  
-  The above table is the test result of one million info logs (about 50 bytes each) continuously printed by a single thread. The [co/log](https://github.com/idealvin/co/blob/master/include/log.h) is almost two orders of magnitude faster than [glog](https://github.com/google/glog).
-
-  Why is it so fast? The first is that it is based on [fastream](https://github.com/idealvin/co/blob/master/include/fastream.h) that is 8-25 times faster than `sprintf`. The second is that it has almost no memory allocation operations.
-
-- **[flag](https://github.com/idealvin/co/blob/master/src/flag.cc)**
-
-  `flag` is a command line and configuration file parsing library that supports automatic generation of configuration files.
-
-  ```cpp
-  #include "co/flag.h"
-
-  DEF_int32(i, 32, "comments");
-  DEF_string(s, "xxx", "string type");
-
-  int main(int argc, char** argv) {
-      flag::init(argc, argv);
-      std::cout << "i: "<< FLG_i << std::endl;
-      std::cout << "s: "<< FLG_s << std::endl;
-      return 0;
-  }
-  ```
-
-  Build and run:
-  ```sh
-  ./xx                         # start with default parameters
-  ./xx -i=4k -s="hello world"  # integers can take unit k,m,g,t,p (case insensitive)
-  ./xx -i 4k -s "hello world"  # equivalent to above
-  ./xx --mkconf                # automatically generate configuration file xx.conf
-  ./xx -config=xx.conf         # start from configuration file
-  ```
-
-- **[json](https://github.com/idealvin/co/blob/master/src/json.cc)**
-
-  `json` is a json library comparable to [rapidjson](https://github.com/Tencent/rapidjson), if you use [jemalloc](https://github.com/jemalloc/jemalloc), the performance of `parse` and `stringify` will be further improved. This library's support for the json standard is not as comprehensive as rapidjson, but it can meet the basic needs of programmers and is easier to use.
+**[A tiny boost library in C++11.](https://github.com/idealvin/coost)**
 
 
-## Components
 
-- [co/include](https://github.com/idealvin/co/tree/master/include)  
-  Header files of `libco`.
+## 0. Introduction
 
-- [co/src](https://github.com/idealvin/co/tree/master/src)  
-  Source files of `libco`.
+**[coost](https://github.com/idealvin/coost)** is an elegant and efficient cross-platform C++ base library. Its goal is to create a sword of C++ to make C++ programming easy and enjoyable.
 
-- [co/test](https://github.com/idealvin/co/tree/master/test)  
+The original name of coost is **co** or cocoyaxi. It is like [boost](https://www.boost.org/), but more lightweight, **the static library built on linux or mac is only about 1MB in size**. However, it still provides enough powerful features:
+
+<table>
+<tr><td width=33% valign=top>
+
+- Command line and config file parser (flag)
+- **High performance log library (log)**
+- Unit testing framework
+- **go-style coroutine**
+- Coroutine-based network library
+- Efficient JSON library
+- **JSON RPC framework**
+
+</td><td width=34% valign=top>
+
+- Atomic operation (atomic)
+- **Efficient stream (fastream)**
+- Efficient string (fastring)
+- String utility (str)
+- Time library (time)
+- Thread library (thread)
+- Timed Task Scheduler
+
+</td><td valign=top>
+
+- **God-oriented programming**
+- LruMap
+- hash library
+- path library
+- File utilities (fs)
+- System operations (os)
+- **Fast memory allocator**
+ 
+</td></tr>
+</table>
+
+
+
+
+## 1. Sponsor
+
+Coost needs your help. If you are using it or like it, you may consider becoming a sponsor. Thank you very much!
+
+- [Github Sponsors](https://github.com/sponsors/idealvin)
+- [A cup of coffee](https://coostdocs.github.io/en/about/sponsor/)
+
+
+
+
+## 2. Documents
+
+- English: [github](https://coostdocs.github.io/en/about/co/) | [gitee](https://coostdocs.gitee.io/en/about/co/)
+- 简体中文: [github](https://coostdocs.github.io/cn/about/co/) | [gitee](https://coostdocs.gitee.io/cn/about/co/)
+
+
+
+
+## 3. Core features
+
+
+### 3.0 God-oriented programming
+
+[co/god.h](https://github.com/idealvin/coost/blob/master/include/co/god.h) provides some features based on templates.
+
+```cpp
+#include "co/god.h"
+
+void f() {
+    god::bless_no_bugs();
+    god::align_up<8>(31); // -> 32
+    god::is_same<T, int, bool>(); // T is int or bool?
+}
+```
+
+
+
+### 3.1 flag
+
+**[flag](https://coostdocs.github.io/en/co/flag/)** is a command line and config file parser. It is similar to gflags, but more powerful:
+- Support parameters from both command-line and config file.
+- Support automatic generation of the config file.
+- Support flag aliases.
+- Flag of integer type, the value can take a unit `k,m,g,t,p`.
+
+```cpp
+#include "co/flag.h"
+#include "co/cout.h"
+
+DEF_bool(x, false, "x");
+DEF_bool(debug, false, "dbg", d);
+DEF_uint32(u, 0, "xxx");
+DEF_string(s, "", "xx");
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+    COUT << "x: " << FLG_x;
+    COUT << "y: " << FLG_y;
+    COUT << "debug: " << FLG_debug;
+    COUT << "u: " << FLG_u;
+    COUT << FLG_s << "|" << FLG_s.size();
+    return 0;
+}
+```
+
+In the above example, the macros start with `DEF_` define 4 flags. Each flag corresponds to a global variable, whose name is `FLG_` plus the flag name. The flag `debug` has an alias `d`. After building, the above code can run as follow:
+
+```sh
+./xx                  # Run with default configs
+./xx -x -s good       # x -> true, s -> "good"
+./xx -debug           # debug -> true
+./xx -xd              # x -> true, debug -> true
+./xx -u 8k            # u -> 8192
+
+./xx -mkconf          # Automatically generate a config file: xx.conf
+./xx xx.conf          # run with a config file
+./xx -conf xx.conf    # Same as above
+```
+
+
+
+### 3.2 log
+
+**[log](https://coostdocs.github.io/en/co/log/)** is a high-performance log library, some components in coost use it to print logs.
+
+log supports two types of logs: one is level log, which is divided into 5 levels: debug, info, warning, error and fatal, **printing a fatal log will terminate the program**; the other is topic log, logs are grouped by topic, and logs of different topics are written to different files.
+
+```cpp
+#include "co/log.h"
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+
+    TLOG("xx") << "s" << 23; // topic log
+    DLOG << "hello " << 23;  // debug
+    LOG << "hello " << 23;   // info
+    WLOG << "hello " << 23;  // warning
+    ELOG << "hello " << 23;  // error
+    FLOG << "hello " << 23;  // fatal
+
+    return 0;
+}
+```
+
+co/log also provides a series of `CHECK` macros, which is an enhanced version of `assert`, and they will not be cleared in debug mode.
+
+```cpp
+void* p = malloc(32);
+CHECK(p != NULL) << "malloc failed..";
+CHECK_NE(p, NULL) << "malloc failed..";
+```
+
+log is very fast, the following are some test results:
+
+| platform | glog | co/log | speedup |
+| ------ | ------ | ------ | ------ |
+| win2012 HHD | 1.6MB/s | 180MB/s | 112.5 |
+| win10 SSD | 3.7MB/s | 560MB/s | 151.3 |
+| mac SSD | 17MB/s | 450MB/s | 26.4 |
+| linux SSD | 54MB/s | 1023MB/s | 18.9 |
+
+The above is the write speed of co/log and glog (single thread, 1 million logs). It can be seen that co/log is nearly two orders of magnitude faster than glog.
+
+| threads | linux co/log | linux spdlog | win co/log | win spdlog | speedup |
+| ------ | ------ | ------ | ------ | ------ | ------ |
+| 1 | 0.087235 | 2.076172 | 0.117704 | 0.461156 | 23.8/3.9 |
+| 2 | 0.183160 | 3.729386 | 0.158122 | 0.511769 | 20.3/3.2 |
+| 4 | 0.206712 | 4.764238 | 0.316607 | 0.743227 | 23.0/2.3 |
+| 8 | 0.302088 | 3.963644 | 0.406025 | 1.417387 | 13.1/3.5 |
+
+The above is the time of [printing 1 million logs with 1, 2, 4, and 8 threads](https://github.com/idealvin/coost/tree/benchmark), in seconds. Speedup is the performance improvement of co/log compared to spdlog on linux and windows platforms.
+
+
+
+### 3.3 unitest
+
+[unitest](https://coostdocs.github.io/en/co/unitest/) is a simple and easy-to-use unit test framework. Many components in coost use it to write unit test code, which guarantees the stability of coost.
+
+```cpp
+#include "co/unitest.h"
+#include "co/os.h"
+
+namespace test {
+    
+DEF_test(os) {
+    DEF_case(homedir) {
+        EXPECT_NE(os::homedir(), "");
+    }
+
+    DEF_case(cpunum) {
+        EXPECT_GT(os::cpunum(), 0);
+    }
+}
+    
+} // namespace test
+```
+
+The above is a simple example. The `DEF_test` macro defines a test unit, which is actually a function (a method in a class). The `DEF_case` macro defines test cases, and each test case is actually a code block. The main function is simple as below:
+
+```cpp
+#include "co/unitest.h"
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+    unitest::run_all_tests();
+    return 0;
+}
+```
+
+The directory [unitest](https://github.com/idealvin/coost/tree/master/unitest) contains the unit test code in coost. Users can run unitest with the following commands:
+
+```sh
+xmake r unitest      # Run all test cases
+xmake r unitest -os  # Run test cases in the os unit
+```
+
+
+
+### 3.4 JSON
+
+In coost v3.0, **[Json](https://github.com/idealvin/coost/blob/master/include/co/json.h)** provides **fluent APIs**, which is more convenient to use.
+
+```cpp
+// {"a":23,"b":false,"s":"123","v":[1,2,3],"o":{"xx":0}}
+Json x = {
+    { "a", 23 },
+    { "b", false },
+    { "s", "123" },
+    { "v", {1,2,3} },
+    { "o", {
+        {"xx", 0}
+    }},
+};
+
+// equal to x
+Json y = Json()
+    .add_member("a", 23)
+    .add_member("b", false)
+    .add_member("s", "123")
+    .add_member("v", Json().push_back(1).push_back(2).push_back(3))
+    .add_member("o", Json().add_member("xx", 0));
+
+x.get("a").as_int();       // 23
+x.get("s").as_string();    // "123"
+x.get("s").as_int();       // 123, string -> int
+x.get("v", 0).as_int();    // 1
+x.get("v", 2).as_int();    // 3
+x.get("o", "xx").as_int(); // 0
+
+x["a"] == 23;          // true
+x["s"] == "123";       // true
+x.get("o", "xx") != 0; // false
+```
+
+| os | co/json stringify | co/json parse | rapidjson stringify | rapidjson parse | speedup |
+| ------ | ------ | ------ | ------ | ------ | ------ |
+| win | 569 | 924 | 2089 | 2495 | 3.6/2.7 |
+| mac | 783 | 1097 | 1289 | 1658 | 1.6/1.5 |
+| linux | 468 | 764 | 1359 | 1070 | 2.9/1.4 |
+
+The above is the average time of stringifying and parsing minimized [twitter.json](https://raw.githubusercontent.com/simdjson/simdjson/master/jsonexamples/twitter.json), in microseconds (us), speedup is the performance improvement of co/json compared to rapidjson.
+
+
+
+### 3.5 Coroutine
+
+coost has implemented a [go-style](https://github.com/golang/go) coroutine, which has the following features:
+
+- Support multi-thread scheduling, the default number of threads is the number of system CPU cores.
+- Shared stack, coroutines in the same thread share several stacks (the default size is 1MB), and the memory usage is low.
+- There is a flat relationship between coroutines, and new coroutines can be created from anywhere (including in coroutines).
+- Support coroutine synchronization events, coroutine locks, channels, and waitgroups.
+
+```cpp
+#include "co/co.h"
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+
+    co::WaitGroup wg;
+    wg.add(2);
+
+    go([wg](){
+        LOG << "hello world";
+        wg.done();
+    });
+
+    go([wg](){
+        LOG << "hello again";
+        wg.done();
+    });
+
+    wg.wait();
+    return 0;
+}
+```
+
+In the above code, the coroutines created by `go()` will be evenly distributed to different scheduling threads. Users can also control the scheduling of coroutines by themselves:
+
+```cpp
+// run f1 and f2 in the same scheduler
+auto s = co::next_scheduler();
+s->go(f1);
+s->go(f2);
+
+// run f in all schedulers
+for (auto& s : co::schedulers()) {
+    s->go(f);
+}
+```
+
+
+
+### 3.6 network programming
+
+coost provides a coroutine-based network programming framework, which can be roughly divided into 3 parts:
+
+- **[coroutineized socket API](https://coostdocs.github.io/en/co/coroutine/#coroutineized-socket-api)**, similar in form to the system socket API, users familiar with socket programming can easily write high-performance network programs in a synchronous manner.
+- [TCP](https://coostdocs.github.io/en/co/net/tcp/), [HTTP](https://coostdocs.github.io/en/co/net/http/), [RPC](https://coostdocs.github.io/en/co/net/rpc/) and other high-level network programming components, compatible with IPv6, also support SSL, it is more convenient to use than socket API.
+- **[System API hook](https://coostdocs.github.io/en/co/coroutine/#system-api-hook)**, with which, third-party network libraries can be used directly in coroutines.
+
+
+**RPC server**
+
+```cpp
+#include "co/co.h"
+#include "co/rpc.h"
+#include "co/time.h"
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+
+    rpc::Server()
+        .add_service(new xx::HelloWorldImpl)
+        .start("127.0.0.1", 7788, "/xx");
+
+    for (;;) sleep::sec(80000);
+    return 0;
+}
+```
+
+`rpc::Server` also supports HTTP protocol, you may use the POST method to call the RPC service:
+
+```sh
+curl http://127.0.0.1:7788/xx --request POST --data '{"api":"ping"}'
+```
+
+
+**Static web server**
+
+```cpp
+#include "co/flag.h"
+#include "co/http.h"
+
+DEF_string(d, ".", "root dir"); // docroot for the web server
+
+int main(int argc, char** argv) {
+    flag::init(argc, argv);
+    so::easy(FLG_d.c_str()); // mum never have to worry again
+    return 0;
+}
+```
+
+
+**HTTP server**
+
+```cpp
+void cb(const http::Req& req, http::Res& res) {
+    if (req.is_method_get()) {
+        if (req.url() == "/hello") {
+            res.set_status(200);
+            res.set_body("hello world");
+        } else {
+            res.set_status(404);
+        }
+    } else {
+        res.set_status(405); // method not allowed
+    }
+}
+
+// http
+http::Server().on_req(cb).start("0.0.0.0", 80);
+
+// https
+http::Server().on_req(cb).start(
+    "0.0.0.0", 443, "privkey.pem", "certificate.pem"
+);
+```
+
+
+**HTTP client**
+
+```cpp
+void f() {
+    http::Client c("https://github.com");
+
+    c.get("/");
+    LOG << "response code: "<< c.status();
+    LOG << "body size: "<< c.body().size();
+    LOG << "Content-Length: "<< c.header("Content-Length");
+    LOG << c.header();
+
+    c.post("/hello", "data xxx");
+    LOG << "response code: "<< c.status();
+}
+
+go(f);
+```
+
+
+
+
+## 4. Code composition
+
+- [include](https://github.com/idealvin/coost/tree/master/include)
+
+  Header files of coost.
+
+- [src](https://github.com/idealvin/coost/tree/master/src)
+
+  Source files of coost, built as libco.
+
+- [test](https://github.com/idealvin/coost/tree/master/test)
+
   Some test code, each `.cc` file will be compiled into a separate test program.
 
-- [co/unitest](https://github.com/idealvin/co/tree/master/unitest)  
-  Some unit test code, each `.cc` file corresponds to a different test unit, and all code is compiled into a single test program.
+- [unitest](https://github.com/idealvin/coost/tree/master/unitest)
 
-- [co/gen](https://github.com/idealvin/co/tree/master/gen)  
-  A code generation tool automatically generates rpc framework code according to the `proto` file.
+  Some unit test code, each `.cc` file corresponds to a different test unit, and all code will be compiled into a single test program.
+
+- [gen](https://github.com/idealvin/coost/tree/master/gen)
+
+  A code generator for the RPC framework.
 
 
-## Compiling
 
-### xmake
 
-[Xmake](https://github.com/xmake-io/xmake) is recommended for compiling the `CO` project.
+## 5. Building
 
-- Compiler
-    - Linux: [gcc 4.8+](https://gcc.gnu.org/projects/cxx-status.html#cxx11)
-    - Mac: [clang 3.3+](https://clang.llvm.org/cxx_status.html)
-    - Windows: [vs2015+](https://visualstudio.microsoft.com/)
+### 5.1 Compilers required
 
-- Install xmake
+To build coost, you need a compiler that supports C++11:
 
-  For windows, mac and debian/ubuntu, you can directly go to the [xmake release page](https://github.com/xmake-io/xmake/releases) to download the installation package. For other systems, please refer to xmake's [installation instructions](https://xmake.io/#/guide/installation).
+- Linux: [gcc 4.8+](https://gcc.gnu.org/projects/cxx-status.html#cxx11)
+- Mac: [clang 3.3+](https://clang.llvm.org/cxx_status.html)
+- Windows: [vs2015+](https://visualstudio.microsoft.com/)
 
-  Xmake disables compilation as root by default on linux. [ruki](https://github.com/waruqi) says it is not safe. You can add the following line to `~/.bashrc` to enable root compilation:
 
-  ```sh
-  export XMAKE_ROOT=y
-  ```
+### 5.2 Build with xmake
 
-- Quick start
+coost recommends using [xmake](https://github.com/xmake-io/xmake) as the build tool.
 
-  ```sh
-  # All commands are executed in the root directory of co (the same below)
-  xmake       # build libco and gen by default
-  xmake -a    # build all projects (libco, gen, co/test, co/unitest)
-  ```
 
-- Build libco
+#### 5.2.1 Quick start
 
-  ```sh
-  xmake build libco      # build libco only
-  xmake -b libco         # the same as above
-  ```
+```sh
+# All commands are executed in the root directory of coost (the same below)
+xmake      # build libco by default
+xmake -a   # build all projects (libco, gen, test, unitest)
+```
 
-- Build and run unitest code
 
-  [co/unitest](https://github.com/idealvin/co/tree/master/unitest) is unit test code that verifies the correctness of the functionality of the base library.
+#### 5.2.2 Build shared library
 
-  ```sh
-  xmake build unitest    # build can be abbreviated as -b
-  xmake run unitest -a   # run all unit tests
-  xmake r unitest -a     # the same as above
-  xmake r unitest -os    # run unit test os
-  xmake r unitest -json  # run unit test json
-  ```
+```sh
+xmake f -k shared
+xmake -v
+```
 
-- Build and run test code
+#### 5.2.3 Build with mingw
 
-  [co/test](https://github.com/idealvin/co/tree/master/test) contains some test code. You can easily add a `xxx.cc` source file in the `co/test` directory, and then execute `xmake build xxx` to build it.
+```sh
+xmake f -p mingw
+xmake -v
+```
 
-  ```sh
-  xmake build flag             # flag.cc
-  xmake build log              # log.cc
-  xmake build json             # json.cc
-  xmake build rapidjson        # rapidjson.cc
-  xmake build rpc              # rpc.cc
-  xmake build easy             # so/easy.cc
-  xmake build pingpong         # so/pingpong.cc
-  
-  xmake r flag -xz             # test flag
-  xmake r log                  # test log
-  xmake r log -cout            # also log to terminal
-  xmake r log -perf            # performance test
-  xmake r json                 # test json
-  xmake r rapidjson            # test rapidjson
-  xmake r rpc                  # start rpc server
-  xmake r rpc -c               # start rpc client
-  xmake r easy -d xxx          # start web server
-  xmake r pingpong             # pingpong server:   127.0.0.1:9988
-  xmake r pingpong ip=::       # pingpong server:   :::9988  (ipv6)
-  xmake r pingpong -c ip=::1   # pingpong client -> ::1:9988
-  ```
 
-- Build gen
+#### 5.2.4 Enable HTTP/SSL features
 
-  ```sh
-  # It is recommended to put gen in the system directory (e.g. /usr/local/bin/).
-  xmake build gen
-  gen hello_world.proto
-  ```
+```sh
+xmake f --with_libcurl=true --with_openssl=true
+xmake -v
+```
 
-  Proto file format can refer to [hello_world.proto](https://github.com/idealvin/co/blob/master/test/__/rpc/hello_world.proto).
 
-- Installation
+#### 5.2.5 Install libco
 
-  ```sh
-  # Install header files, libco, gen by default.
-  xmake install -o pkg         # package related files to the pkg directory
-  xmake i -o pkg               # the same as above
-  xmake install -o /usr/local  # install to the /usr/local directory
-  ```
+```sh
+# Install header files and libco by default.
+xmake install -o pkg         # package related files to the pkg directory
+xmake i -o pkg               # the same as above
+xmake install -o /usr/local  # install to the /usr/local directory
+```
 
-### cmake
 
-[izhengfan](https://github.com/izhengfan) has helped to provide cmake support:  
-- Build `libco` and `gen` by default.
-- The library files are in the `build/lib` directory, and the executable files are in the `build/bin` directory.
-- You can use `BUILD_ALL` to compile all projects.
-- You can use `CMAKE_INSTALL_PREFIX` to specify the installation directory.
+#### 5.2.6 Install libco from xrepo
+
+```sh
+xrepo install -f "openssl=true,libcurl=true" coost
+```
+
+
+
+### 5.3 Build with cmake
+
+[izhengfan](https://github.com/izhengfan) helped to provide cmake support, [SpaceIm](https://github.com/SpaceIm) improved it and made it perfect.
+
+
+#### 5.3.1 Build libco
 
 ```sh
 mkdir build && cd build
 cmake ..
-cmake .. -DBUILD_ALL=ON -DCMAKE_INSTALL_PREFIX=pkg
 make -j8
-make install
 ```
 
 
-## License
+#### 5.3.2 Build all projects
 
-`CO` is licensed under the `MIT` License. It includes code from some other projects, which have their own licenses, see details in [LICENSE.md](https://github.com/idealvin/co/blob/master/LICENSE.md).
-
-
-## Special thanks
-
-- The code of [co/context](https://github.com/idealvin/co/tree/master/src/co/context) is from [tbox](https://github.com/tboox/tbox) by [ruki](https://github.com/waruqi), special thanks!
-- The English reference documents of CO are translated by [Leedehai](https://github.com/Leedehai) (1-10), [daidai21](https://github.com/daidai21) (11-15) and [google](https://translate.google.cn/), special thanks!
-- [ruki](https://github.com/waruqi) has helped to improve the xmake compilation scripts, thanks in particular!
-- [izhengfan](https://github.com/izhengfan) provided cmake compilation scripts, thank you very much!
+```sh
+mkdir build && cd build
+cmake .. -DBUILD_ALL=ON
+make -j8
+```
 
 
-## Donate
+#### 5.3.3 Enable HTTP/SSL features
 
-Goto the [Donate](https://idealvin.github.io/donate/) page.
+```sh
+mkdir build && cd build
+cmake .. -DWITH_LIBCURL=ON -DWITH_OPENSSL=ON
+make -j8
+```
+
+
+#### 5.3.4 Build shared library
+
+```sh
+cmake .. -DBUILD_SHARED_LIBS=ON
+make -j8
+```
+
+
+#### 5.3.5 Install libco from vcpkg
+
+```sh
+vcpkg install coost:x64-windows
+
+# HTTP & SSL support
+vcpkg install coost[libcurl,openssl]:x64-windows
+```
+
+
+#### 5.3.6 Install libco from conan
+
+```sh
+conan install coost
+```
+
+
+#### 5.3.7 Find coost in Cmake
+
+```cmake
+find_package(coost REQUIRED CONFIG)
+target_link_libraries(userTarget coost::co)
+```
+
+
+
+
+## 6. License
+
+The MIT license. coost contains codes from some other projects, which have their own licenses, see details in [LICENSE.md](https://github.com/idealvin/coost/blob/master/LICENSE.md).
+
+
+
+
+## 7. Special thanks
+
+- The code of [co/context](https://github.com/idealvin/coost/tree/master/src/co/context) is from [tbox](https://github.com/tboox/tbox) by [ruki](https://github.com/waruqi), special thanks!
+- The early English documents of co are translated by [Leedehai](https://github.com/Leedehai) and [daidai21](https://github.com/daidai21), special thanks!
+- [ruki](https://github.com/waruqi) has helped to improve the xmake building scripts, thanks in particular!
+- [izhengfan](https://github.com/izhengfan) provided cmake building scripts, thank you very much!
+- [SpaceIm](https://github.com/SpaceIm) has improved the cmake building scripts, and provided support for `find_package`. Really great help, thank you!

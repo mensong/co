@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef int8_t  int8;
 typedef int16_t int16;
@@ -11,22 +12,6 @@ typedef uint8_t  uint8;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
-
-#ifdef _MSC_VER
-#define __thread __declspec(thread)
-#else
-#define __forceinline __attribute__((always_inline))
-#endif
-
-#define load8(p)     (*(const uint8*) (p))
-#define load16(p)    (*(const uint16*)(p))
-#define load32(p)    (*(const uint32*)(p))
-#define load64(p)    (*(const uint64*)(p))
-
-#define save8(p, v)  (*(uint8*) (p) = (v))
-#define save16(p, v) (*(uint16*)(p) = (v))
-#define save32(p, v) (*(uint32*)(p) = (v))
-#define save64(p, v) (*(uint64*)(p) = (v))
 
 #define MAX_UINT8  ((uint8)  ~((uint8) 0))
 #define MAX_UINT16 ((uint16) ~((uint16)0))
@@ -43,41 +28,55 @@ typedef uint64_t uint64;
 #define MIN_INT32  ((int32) ~MAX_INT32)
 #define MIN_INT64  ((int64) ~MAX_INT64)
 
-#define DISALLOW_COPY_AND_ASSIGN(Type) \
-    Type(const Type&) = delete; \
-    void operator=(const Type&) = delete
+#define DISALLOW_COPY_AND_ASSIGN(T) \
+    T(const T&) = delete; \
+    void operator=(const T&) = delete
 
-template<typename To, typename From>
-inline To force_cast(From f) {
-    return (To) f;
-}
-
-#if (defined(__GNUC__) && __GNUC__ >= 3) || defined(__clang__)
-#define  unlikely(x)  __builtin_expect(!!(x), 0)
+#if SIZE_MAX == UINT64_MAX
+#define __arch64 1
 #else
-#define  unlikely(x)  (x)
+#define __arch32 1
 #endif
 
-// Borrowed from ruki's tbox(https://github.com/tboox/tbox).
-// See details in co/context/arch.h.
-#if defined(__LP64__) || \
-    defined(__64BIT__) || \
-    defined(_LP64) || \
-    defined(__x86_64) || \
-    defined(__x86_64__) || \
-    defined(__amd64) || \
-    defined(__amd64__) || \
-    defined(__arm64) || \
-    defined(__arm64__) || \
-    defined(__sparc64__) || \
-    defined(__PPC64__) || \
-    defined(__ppc64__) || \
-    defined(__powerpc64__) || \
-    defined(_M_X64) || \
-    defined(_M_AMD64) || \
-    defined(_M_IA64) || \
-    (defined(__WORDSIZE) && (__WORDSIZE == 64)) 
-  #define ARCH64
+#ifdef _MSC_VER
+#ifndef __thread
+#define __thread __declspec(thread)
+#endif
 #else
-  #define ARCH32
+#ifndef __forceinline 
+#define __forceinline __attribute__((always_inline))
+#endif
+#endif
+
+#ifndef unlikely
+#if (defined(__GNUC__) && __GNUC__ >= 3) || defined(__clang__)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define unlikely(x) (x)
+#endif
+#endif
+
+#define _CO_CONCAT(x, y) x##y
+#define _CO_STRINGIFY(x) #x
+#define CO_CONCAT(x, y) _CO_CONCAT(x, y)
+#define CO_STRINGIFY(x) _CO_STRINGIFY(x)
+#define CO_ANONYMOUS_VAR(x) CO_CONCAT(x, __LINE__)
+
+// generated from config.h.in
+#include "config.h"
+
+// __coapi: used to export symbols in shared library
+// Do not use (or reuse outside of coost) this definiton  yourself
+#if COOST_SHARED > 0
+  #ifdef _WIN32
+    #ifdef BUILDING_CO_SHARED
+      #define __coapi __declspec(dllexport)
+    #else
+      #define __coapi __declspec(dllimport)
+    #endif
+  #else
+    #define __coapi __attribute__((visibility("default")))
+  #endif
+#else
+  #define __coapi
 #endif

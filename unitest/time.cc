@@ -12,31 +12,15 @@ DEF_test(time) {
         EXPECT_GT(us, 0);
         EXPECT_GT(ms, 0);
 
-        for (int i = 0; i < 3; i++) {
-            int64 x = now::us();
-            int64 y = now::us();
-            EXPECT_LE(x, y);
-        }
+        int64 x = now::us();
+        int64 y = now::us();
+        EXPECT_LE(x, y);
     }
 
     DEF_case(str) {
         fastring ymdhms = now::str("%Y%m%d%H%M%S");
-        fastring S = now::str("%S");
-        fastring M = now::str("%M");
-        fastring H = now::str("%H");
         fastring ymd = now::str("%Y%m%d");
-        fastring d = now::str("%d");
-        fastring m = now::str("%m");
-        fastring y = now::str("%Y");
-
-        EXPECT_NE(y, fastring());
-        EXPECT_NE(m, fastring());
-        EXPECT_NE(d, fastring());
-        EXPECT_NE(H, fastring());
-        EXPECT_NE(M, fastring());
-        EXPECT_NE(S, fastring());
-        EXPECT_EQ(ymdhms, y + m + d + H + M + S);
-        EXPECT_EQ(ymd, y + m + d);
+        EXPECT(ymdhms.starts_with(ymd));
     }
 
     DEF_case(sleep) {

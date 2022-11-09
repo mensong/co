@@ -37,7 +37,9 @@
 
 #include "co/hash/md5.h"
 
-namespace {
+#ifdef _MSC_VER
+#pragma warning (disable:4244)
+#endif
 
 /*
  * The basic MD5 functions.
@@ -88,13 +90,12 @@ namespace {
  * This processes one or more 64-byte data blocks, but does NOT update
  * the bit counters.  There are no alignment requirements.
  */
-const void* body(md5_ctx_t* ctx, const void* data, size_t size) {
+static const void* body(md5_ctx_t* ctx, const void* data, size_t size) {
     const uint8* ptr;
     uint32 a, b, c, d;
     uint32 saved_a, saved_b, saved_c, saved_d;
 
     ptr = (const uint8*) data;
-
     a = ctx->a;
     b = ctx->b;
     c = ctx->c;
@@ -182,7 +183,6 @@ const void* body(md5_ctx_t* ctx, const void* data, size_t size) {
         b += saved_b;
         c += saved_c;
         d += saved_d;
-
         ptr += 64;
     } while (size -= 64);
 
@@ -190,7 +190,6 @@ const void* body(md5_ctx_t* ctx, const void* data, size_t size) {
     ctx->b = b;
     ctx->c = c;
     ctx->d = d;
-
     return ptr;
 }
 
@@ -203,14 +202,11 @@ const void* body(md5_ctx_t* ctx, const void* data, size_t size) {
 #undef SET
 #undef GET
 
-} // namespace
-
 void md5_init(md5_ctx_t* ctx) {
     ctx->a = 0x67452301;
     ctx->b = 0xefcdab89;
     ctx->c = 0x98badcfe;
     ctx->d = 0x10325476;
-
     ctx->lo = 0;
     ctx->hi = 0;
 }
@@ -249,7 +245,7 @@ void md5_update(md5_ctx_t* ctx, const void* data, size_t size) {
     memcpy(ctx->buffer, data, size);
 }
 
-void md5_finish(md5_ctx_t* ctx, uint8* result) {
+void md5_final(md5_ctx_t* ctx, uint8 res[16]) {
     size_t used, available;
 
     used = ctx->lo & 0x3f;
@@ -278,42 +274,42 @@ void md5_finish(md5_ctx_t* ctx, uint8* result) {
 
     body(ctx, ctx->buffer, 64);
 
-    result[0] = ctx->a;
-    result[1] = ctx->a >> 8;
-    result[2] = ctx->a >> 16;
-    result[3] = ctx->a >> 24;
-    result[4] = ctx->b;
-    result[5] = ctx->b >> 8;
-    result[6] = ctx->b >> 16;
-    result[7] = ctx->b >> 24;
-    result[8] = ctx->c;
-    result[9] = ctx->c >> 8;
-    result[10] = ctx->c >> 16;
-    result[11] = ctx->c >> 24;
-    result[12] = ctx->d;
-    result[13] = ctx->d >> 8;
-    result[14] = ctx->d >> 16;
-    result[15] = ctx->d >> 24;
+    res[0] = ctx->a;
+    res[1] = ctx->a >> 8;
+    res[2] = ctx->a >> 16;
+    res[3] = ctx->a >> 24;
+    res[4] = ctx->b;
+    res[5] = ctx->b >> 8;
+    res[6] = ctx->b >> 16;
+    res[7] = ctx->b >> 24;
+    res[8] = ctx->c;
+    res[9] = ctx->c >> 8;
+    res[10] = ctx->c >> 16;
+    res[11] = ctx->c >> 24;
+    res[12] = ctx->d;
+    res[13] = ctx->d >> 8;
+    res[14] = ctx->d >> 16;
+    res[15] = ctx->d >> 24;
 
     memset(ctx, 0, sizeof(*ctx));
 }
 
-fastring md5sum(const void* s, size_t n) {
-    md5_ctx_t ctx;
-    md5_init(&ctx);
-    md5_update(&ctx, s, n);
+void md5sum(const void* s, size_t n, char res[32]) {
+    uint8 buf[16];
+    md5digest(s, n, (char*)buf);
 
-    uint8 md5[16];
-    md5_finish(&ctx, md5);
-
-    fastring r;
-    r.resize(32);
-    char* x = (char*) r.data();
-
-    for (int i = 0; i < 16; ++i) {
-        *x++ = "0123456789abcdef"[md5[i] >> 4];
-        *x++ = "0123456789abcdef"[md5[i] & 0x0f];
+    char* x = res;
+    for (int i = 0; i < 16; i += 4) {
+        #define hex_tb "0123456789abcdef"
+        x[0] = hex_tb[buf[i] >> 4];
+        x[1] = hex_tb[buf[i] & 0x0f];
+        x[2] = hex_tb[buf[i + 1] >> 4];
+        x[3] = hex_tb[buf[i + 1] & 0x0f];
+        x[4] = hex_tb[buf[i + 2] >> 4];
+        x[5] = hex_tb[buf[i + 2] & 0x0f];
+        x[6] = hex_tb[buf[i + 3] >> 4];
+        x[7] = hex_tb[buf[i + 3] & 0x0f];
+        x += 8;
+        #undef hex_tb
     }
-
-    return r;
 }

@@ -3,29 +3,56 @@
 #include "flag.h"
 #include "fastream.h"
 #include "atomic.h"
-#include "thread.h"
+#include <functional>
 
-#ifdef _MSC_VER
-#pragma warning (disable:4722)
-#endif
-
-DEC_int32(min_log_level);
+__coapi DEC_bool(cout);
+__coapi DEC_int32(min_log_level);
 
 namespace ___ {
 namespace log {
 
-// log::init() must be called once at the beginning of main().
-void init();
+/**
+ * stop the logging thread and write all buffered logs to destination.
+ *   - This function will be automatically called at exit.
+ */
+__coapi void exit();
 
-// Write all buffered logs to destination and stop the logging thread.
-void close();
+enum {
+    log2local = 1,
+};
+
+/**
+ * set a callback for writing level logs
+ *   - By default, logs will be written into a local file. Users can set a callback to 
+ *     write logs to different destinations.
+ * 
+ * @param cb
+ *   a callback takes 2 params:  void f(const void* p, size_t n);
+ *     - p points to the buffer which may contain multiple logs
+ *     - n is size of the data in the buffer
+ * 
+ * @param flags
+ *   formed by ORing any of the following values:
+ *     - log::log2local: also log to local file
+ */
+__coapi void set_write_cb(const std::function<void(const void*, size_t)>& cb, int flags=0);
+
+/**
+ * set a callback for writing topic logs (TLOG)
+ * 
+ * @param cb
+ *   a callback takes 3 params:  void f(const char* topic, const void* p, size_t n);
+ *     - topic is useful when writing logs to something like kafka
+ *     - p points to the buffer which may contain multiple logs
+ *     - n is size of the data in the buffer
+ * 
+ * @param flags
+ *   formed by ORing any of the following values:
+ *     - log::log2local: also log to local file
+ */
+__coapi void set_write_cb(const std::function<void(const char*, const void*, size_t)>& cb, int flags=0);
 
 namespace xx {
-
-void push_fatal_log(fastream* fs);
-void push_level_log(fastream* fs, int level);
-
-extern __thread fastream* xxLog;
 
 enum LogLevel {
     debug = 0,
@@ -35,68 +62,51 @@ enum LogLevel {
     fatal = 4
 };
 
-class LevelLogSaver {
+class __coapi LevelLogSaver {
   public:
-    LevelLogSaver(const char* file, unsigned line, int level) : _level(level) {
-        if (xxLog == 0) xxLog = new fastream(128);
-        xxLog->clear();
+    LevelLogSaver(const char* prefix, int n, int level);
+    ~LevelLogSaver();
 
-        (*xxLog) << "DIWEF"[level];
-        xxLog->resize(14); // make room for time: 1108 18:16:08
-        (*xxLog) << ' ' << current_thread_id() << ' ' << file << ':' << line << ']' << ' ';
-    }
-
-    ~LevelLogSaver() {
-        (*xxLog) << '\n';
-        push_level_log(xxLog, _level);
-    }
-
-    fastream& fs() {
-        return *xxLog;
-    }
+    fastream& stream() const { return _s; }
 
   private:
-    int _level;
+    fastream& _s;
+    size_t _n;
 };
 
-class FatalLogSaver {
+class __coapi FatalLogSaver {
   public:
-    FatalLogSaver(const char* file, unsigned int line) {
-        if (xxLog == 0) xxLog = new fastream(128);
-        xxLog->clear();
-        (*xxLog) << ' ' << current_thread_id() << ' ' << file << ':' << line << ']' << ' ';
-    }
+    FatalLogSaver(const char* prefix, int n);
+    ~FatalLogSaver();
 
-    ~FatalLogSaver() {
-        (*xxLog) << '\n';
-        push_fatal_log(xxLog);
-    }
-
-    fastream& fs() {
-        return *xxLog;
-    }
-};
-
-class CLogSaver {
-  public:
-    CLogSaver() = default;
-
-    CLogSaver(const char* file, unsigned int line) {
-        _fs << file << ':' << line << ']' << ' ';
-    }
-
-    ~CLogSaver() {
-        _fs << '\n';
-        ::fwrite(_fs.data(), 1, _fs.size(), stderr);
-    }
-
-    fastream& fs() {
-        return _fs;
-    }
+    fastream& stream() const { return _s; }
 
   private:
-    fastream _fs;
+    fastream& _s;
 };
+
+class __coapi TLogSaver {
+  public:
+    TLogSaver(const char* prefix, int n, const char* topic);
+    ~TLogSaver();
+
+    fastream& stream() const { return _s; }
+
+  private:
+    fastream& _s;
+    size_t _n;
+    const char* _topic;
+};
+
+template <int N>
+constexpr const char* path_base(const char(&s)[N], int i = N - 1) {
+    return (s[i] == '/' || s[i] == '\\') ? (s + i + 1) : (i == 0 ? s : path_base(s, i - 1));
+}
+
+template <int N>
+constexpr int path_base_len(const char(&s)[N], int i = N - 1) {
+    return (s[i] == '/' || s[i] == '\\') ? (N - 2 - i) : (i == 0 ? N-1 : path_base_len(s, i - 1));
+}
 
 } // namespace xx
 } // namespace log
@@ -104,26 +114,33 @@ class CLogSaver {
 
 using namespace ___;
 
-#define COUT   log::xx::CLogSaver().fs()
-#define CLOG   log::xx::CLogSaver(__FILE__, __LINE__).fs()
+#define _CO_FILELINE    __FILE__ ":" CO_STRINGIFY(__LINE__) "] "
+#define _CO_LOG_PREFIX  log::xx::path_base(_CO_FILELINE),log::xx::path_base_len(_CO_FILELINE)
 
-// DLOG  ->  DEBUG
-// LOG   ->  INFO
-// WLOG  ->  WARNING
-// ELOG  ->  ERROR
-// FLOG  ->  FATAL    A FATAL log will terminate the program.
-// CHECK ->  FATAL
+// TLOG are logs grouped by the topic.
+// TLOG("xxx") << "hello xxx" << 23;
+// It is better to use a literal string for the topic.
+#define TLOG(topic) log::xx::TLogSaver(_CO_LOG_PREFIX, topic).stream()
+#define TLOG_IF(topic, cond) if (cond) TLOG(topic)
+
+// DLOG  ->  debug log
+// LOG   ->  info log
+// WLOG  ->  warning log
+// ELOG  ->  error log
+// FLOG  ->  fatal log    A fatal log will terminate the program.
+// CHECK ->  fatal log
 //
 // LOG << "hello world " << 23;
 // WLOG_IF(1 + 1 == 2) << "xx";
-#define DLOG  if (FLG_min_log_level <= log::xx::debug) \
-              log::xx::LevelLogSaver(__FILE__, __LINE__, log::xx::debug).fs()
-#define LOG   log::xx::LevelLogSaver(__FILE__, __LINE__, log::xx::info).fs()
-#define WLOG  log::xx::LevelLogSaver(__FILE__, __LINE__, log::xx::warning).fs()
-#define ELOG  log::xx::LevelLogSaver(__FILE__, __LINE__, log::xx::error).fs()
-#define _FLOG log::xx::FatalLogSaver(__FILE__, __LINE__).fs()
-#define FLOG  _FLOG << "fatal error! "
+#define _CO_LOG_STREAM(lv)  log::xx::LevelLogSaver(_CO_LOG_PREFIX, lv).stream()
+#define _CO_FLOG_STREAM     log::xx::FatalLogSaver(_CO_LOG_PREFIX).stream()
+#define DLOG  if (FLG_min_log_level <= log::xx::debug)   _CO_LOG_STREAM(log::xx::debug)
+#define LOG   if (FLG_min_log_level <= log::xx::info)    _CO_LOG_STREAM(log::xx::info)
+#define WLOG  if (FLG_min_log_level <= log::xx::warning) _CO_LOG_STREAM(log::xx::warning)
+#define ELOG  if (FLG_min_log_level <= log::xx::error)   _CO_LOG_STREAM(log::xx::error)
+#define FLOG  _CO_FLOG_STREAM << "fatal error! "
 
+// conditional log
 #define DLOG_IF(cond) if (cond) DLOG
 #define  LOG_IF(cond) if (cond) LOG
 #define WLOG_IF(cond) if (cond) WLOG
@@ -131,42 +148,40 @@ using namespace ___;
 #define FLOG_IF(cond) if (cond) FLOG
 
 #define CHECK(cond) \
-    if (!(cond)) _FLOG << "check failed: " #cond "! "
+    if (!(cond)) _CO_FLOG_STREAM << "check failed: " #cond "! "
 
 #define CHECK_NOTNULL(p) \
-    if ((p) == 0) _FLOG << "check failed: " #p " mustn't be NULL! "
+    if ((p) == 0) _CO_FLOG_STREAM << "check failed: " #p " mustn't be NULL! "
 
-#define _CHECK_OP(a, b, op) \
+#define _CO_CHECK_OP(a, b, op) \
     for (auto _x_ = std::make_pair(a, b); !(_x_.first op _x_.second);) \
-        _FLOG << "check failed: " #a " " #op " " #b ", " \
-              << _x_.first << " vs " << _x_.second << "! "
+        _CO_FLOG_STREAM << "check failed: " #a " " #op " " #b ", " \
+                        << _x_.first << " vs " << _x_.second << "! "
 
-#define CHECK_EQ(a, b) _CHECK_OP(a, b, ==)
-#define CHECK_NE(a, b) _CHECK_OP(a, b, !=)
-#define CHECK_GE(a, b) _CHECK_OP(a, b, >=)
-#define CHECK_LE(a, b) _CHECK_OP(a, b, <=)
-#define CHECK_GT(a, b) _CHECK_OP(a, b, >)
-#define CHECK_LT(a, b) _CHECK_OP(a, b, <)
+#define CHECK_EQ(a, b) _CO_CHECK_OP(a, b, ==)
+#define CHECK_NE(a, b) _CO_CHECK_OP(a, b, !=)
+#define CHECK_GE(a, b) _CO_CHECK_OP(a, b, >=)
+#define CHECK_LE(a, b) _CO_CHECK_OP(a, b, <=)
+#define CHECK_GT(a, b) _CO_CHECK_OP(a, b, >)
+#define CHECK_LT(a, b) _CO_CHECK_OP(a, b, <)
 
-// Occasional Log.
-#define XX_LOG_COUNTER_NAME(x, n) XX_LOG_COUNTER_NAME_CONCAT(x, n)
-#define XX_LOG_COUNTER_NAME_CONCAT(x, n) x##n
-#define XX_LOG_COUNTER XX_LOG_COUNTER_NAME(XX_log_counter_, __LINE__)
+// occasional log
+#define _co_log_counter_name CO_ANONYMOUS_VAR(_co_log_counter_)
 
-#define _LOG_EVERY_N(n, what) \
-    static unsigned int XX_LOG_COUNTER = 0; \
-    if (atomic_fetch_inc(&XX_LOG_COUNTER) % (n) == 0) what
+#define _CO_LOG_EVERY_N(n, what) \
+    static unsigned int _co_log_counter_name = 0; \
+    if (atomic_fetch_inc(&_co_log_counter_name, mo_relaxed) % (n) == 0) what
 
-#define _LOG_FIRST_N(n, what) \
-    static int XX_LOG_COUNTER = 0; \
-    if (XX_LOG_COUNTER < (n) && atomic_fetch_inc(&XX_LOG_COUNTER) < (n)) what
+#define _CO_LOG_FIRST_N(n, what) \
+    static int _co_log_counter_name = 0; \
+    if (_co_log_counter_name < (n) && atomic_fetch_inc(&_co_log_counter_name, mo_relaxed) < (n)) what
 
-#define DLOG_EVERY_N(n) _LOG_EVERY_N(n, DLOG)
-#define  LOG_EVERY_N(n) _LOG_EVERY_N(n, LOG)
-#define WLOG_EVERY_N(n) _LOG_EVERY_N(n, WLOG)
-#define ELOG_EVERY_N(n) _LOG_EVERY_N(n, ELOG)
+#define DLOG_EVERY_N(n) _CO_LOG_EVERY_N(n, DLOG)
+#define  LOG_EVERY_N(n) _CO_LOG_EVERY_N(n, LOG)
+#define WLOG_EVERY_N(n) _CO_LOG_EVERY_N(n, WLOG)
+#define ELOG_EVERY_N(n) _CO_LOG_EVERY_N(n, ELOG)
 
-#define DLOG_FIRST_N(n) _LOG_FIRST_N(n, DLOG)
-#define  LOG_FIRST_N(n) _LOG_FIRST_N(n, LOG)
-#define WLOG_FIRST_N(n) _LOG_FIRST_N(n, WLOG)
-#define ELOG_FIRST_N(n) _LOG_FIRST_N(n, ELOG)
+#define DLOG_FIRST_N(n) _CO_LOG_FIRST_N(n, DLOG)
+#define  LOG_FIRST_N(n) _CO_LOG_FIRST_N(n, LOG)
+#define WLOG_FIRST_N(n) _CO_LOG_FIRST_N(n, WLOG)
+#define ELOG_FIRST_N(n) _CO_LOG_FIRST_N(n, ELOG)
