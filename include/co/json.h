@@ -11,6 +11,13 @@
 namespace json {
 namespace xx {
 
+struct __coapi Initializer {
+    Initializer();
+    ~Initializer() = default;
+};
+
+static Initializer g_initializer;
+
 class Array {
   public:
     typedef void* T;
@@ -141,7 +148,7 @@ class __coapi Json {
     Json(Json& v) noexcept : _h(v._h) { v._h = 0; }
     ~Json() { if (_h) this->reset(); }
 
-    Json(const Json& v) = delete;
+    Json(const Json&) = delete;
     void operator=(const Json&) = delete;
 
     Json& operator=(Json&& v) {
@@ -265,7 +272,7 @@ class __coapi Json {
     Json& get(int i) const { return this->get((uint32)i); }
     Json& get(const char* key) const;
 
-    template <class T,  class ...X>
+    template<class T, class ...X>
     inline Json& get(T&& v, X&& ... x) const {
         auto& r = this->get(std::forward<T>(v));
         return r.is_null() ? r : r.get(std::forward<X>(x)...);
@@ -276,10 +283,10 @@ class __coapi Json {
     //   - eg.
     //     Json x;
     //     x.set("a", "b", 0, 3);  // x-> {"a": {"b": [3]}}
-    template <class T>
+    template<class T>
     inline Json& set(T&& v) { return *this = Json(std::forward<T>(v)); }
 
-    template <class A, class B,  class ...X>
+    template<class A, class B,  class ...X>
     inline Json& set(A&& a, B&& b, X&& ... x) {
         auto& r = this->_set(std::forward<A>(a));
         return r.set(std::forward<B>(b), std::forward<X>(x)...);
@@ -424,8 +431,8 @@ class __coapi Json {
         typedef void* T;
         iterator(T* p, T* e, uint32 step) : _p(p), _e(e), _step(step) {}
 
-        struct End {}; // fake end
-        static const End& end() { static End kEnd; return kEnd; }
+        struct End { constexpr End() noexcept {} }; // fake end
+        static const End& end() { static const End kEnd; return kEnd; }
 
         bool operator!=(const End&) const { return _p != _e; }
         bool operator==(const End&) const { return _p == _e; }
@@ -521,6 +528,8 @@ inline Json parse(const std::string& s) { return parse(s.data(), s.size()); }
 
 } // json
 
-typedef json::Json Json;
+namespace co {
+using Json = json::Json;
+} // co
 
 inline fastream& operator<<(fastream& fs, const json::Json& x) { return x.dbg(fs); }

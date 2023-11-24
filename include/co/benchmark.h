@@ -1,7 +1,7 @@
 #pragma once
 
 #include "def.h"
-#include "stl.h"
+#include "vector.h"
 #include "time.h"
 
 namespace bm {
@@ -23,7 +23,7 @@ struct Group {
     void (*f)(Group&);
     int iters;
     int64 ns;
-    Timer timer;
+    co::Timer timer;
     co::vector<Result> res;
 };
 

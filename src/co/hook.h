@@ -1,12 +1,10 @@
 #pragma once
 
-#ifdef __APPLE__
-#include "TargetConditionals.h"
-#endif
-
 namespace co {
-void disable_hook_sleep();
-void enable_hook_sleep();
+
+// hook sleep or not
+void hook_sleep(bool x);
+
 } // co
 
 // disable hook for android
@@ -22,6 +20,13 @@ void enable_hook_sleep();
 // coroutine schedulers.
 #define __sys_api(x)        _sys_##x
 #define _CO_DEC_SYS_API(x)  extern x##_fp_t __sys_api(x)
+
+struct HookInitializer {
+    HookInitializer();
+    ~HookInitializer();
+};
+
+static HookInitializer g_hook_initializer;
 
 #ifdef _WIN32
 #include <WinSock2.h>
@@ -120,7 +125,7 @@ _CO_DEC_SYS_API(GetQueuedCompletionStatusEx);
 
 namespace co {
 
-// deduce parameter type of ioctl
+// deduce type of the second parameter of ioctl
 template<typename T>
 struct ioctl_param;
 

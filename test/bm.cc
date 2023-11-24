@@ -13,10 +13,32 @@ BM_group(atomic) {
     );
 }
 
+BM_group(rand) {
+    int x;
+    x = ::rand();
+    x = co::rand();
+
+    BM_add(::rand)(
+        x = ::rand();
+    );
+    BM_use(x);
+
+    BM_add(co::rand)(
+        x = co::rand();
+    );
+    BM_use(x);
+
+    uint32 seed = co::rand();
+    BM_add(co::rand(seed))(
+        x = co::rand(seed);
+    );
+    BM_use(x);
+}
+
 BM_group(malloc) {
     void* p;
 
-    BM_add(malloc)(
+    BM_add(::malloc)(
         p = ::malloc(32);
     );
     BM_use(p);
@@ -24,6 +46,12 @@ BM_group(malloc) {
     BM_add(co::alloc)(
         p = co::alloc(32);
     );
+    BM_use(p);
+
+    BM_add(co::alloc_with_align)(
+        p = co::alloc(32, 64);
+    );
+    BM_use(p);
 }
 
 BM_group(malloc_free) {
@@ -42,7 +70,7 @@ BM_group(malloc_free) {
 }
 
 int main(int argc, char** argv) {
-    flag::init(argc, argv);
+    flag::parse(argc, argv);
     bm::run_benchmarks();
     return 0;
 }

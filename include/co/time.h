@@ -3,7 +3,21 @@
 #include "def.h"
 #include "fastring.h"
 
+namespace co {
 namespace now {
+
+#ifdef _WIN32
+namespace xx {
+
+struct __coapi Initializer {
+    Initializer();
+    ~Initializer() = default;
+};
+
+static Initializer g_initializer;
+
+} // xx
+#endif
 
 // monotonic timestamp in nanoseconds
 __coapi int64 ns();
@@ -14,7 +28,7 @@ __coapi int64 us();
 // monotonic timestamp in milliseconds
 __coapi int64 ms();
 
-// "%Y-%m-%d %H:%M:%S" ==> 2018-08-08 08:08:08
+// "%Y-%m-%d %H:%M:%S" ==> 2023-01-07 18:01:23
 __coapi fastring str(const char* fm = "%Y-%m-%d %H:%M:%S");
 
 } // now
@@ -28,18 +42,6 @@ __coapi int64 us();
 __coapi int64 ms();
 
 } // epoch
-
-namespace ___ {
-namespace sleep {
-
-__coapi void ms(uint32 n);
-
-__coapi void sec(uint32 n);
-
-} // sleep
-} // ___
-
-using namespace ___;
 
 class __coapi Timer {
   public:
@@ -66,3 +68,20 @@ class __coapi Timer {
   private:
     int64 _start;
 };
+
+} // co
+
+namespace now = co::now;
+namespace epoch = co::epoch;
+
+namespace _xx {
+namespace sleep {
+
+__coapi void ms(uint32 n);
+
+__coapi void sec(uint32 n);
+
+} // sleep
+} // _xx
+
+using namespace _xx;
